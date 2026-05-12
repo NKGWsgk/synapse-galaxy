@@ -30,11 +30,16 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files（秘密は .env.local のみ）
+.env
+.env*.local
+!.env.example
 
 # vercel
 .vercel
+
+# claude agent local files (worktrees, transient session state)
+/.claude/worktrees/
 
 # typescript
 *.tsbuildinfo

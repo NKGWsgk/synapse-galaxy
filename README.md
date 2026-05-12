@@ -1,36 +1,32 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Synapse Galaxy
 
-## Getting Started
+8 属性でコンテンツを結ぶシナプス型ネットワーク（Next.js + Supabase + Gemini）。
 
-First, run the development server:
+仕様の全文は [docs/SYNAPSE_GALAXY_SPEC.md](./docs/SYNAPSE_GALAXY_SPEC.md) を参照してください。
+
+## セットアップ
+
+1. `.env.example` を `.env.local` にコピーし、Supabase / Gemini のキーを設定する。
+2. Supabase プロジェクトで `supabase/migrations/20250428000000_init.sql` を実行する。
+3. サンプル 100 件を入れる（Gemini で keywords 抽出）:
+
+```bash
+npm run seed
+```
+
+4. 開発サーバー:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 主な構成
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `src/app/api/synapses` — シナプス一覧
+- `src/app/api/synapse/smart-input` — OGP 取得、Amazon `tag` 付与、キーワード抽出、`synapses` / `contents_metadata` 更新
+- `src/components/galaxy/*` — コンパス UI・ベクトルキャンバス・スマートインプット
+- `scripts/seed-sample-data.mts` — シード投入
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Peppy との位置関係
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+リポジトリは Peppy（`/Users/nkgws/Peppy`）と同階層の `/Users/nkgws/synapse-galaxy` に配置されています。
