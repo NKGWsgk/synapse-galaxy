@@ -723,10 +723,17 @@ function computeOuterExtension(row: number, col: number, L: RingGridLayout, angl
   const outX = clipped.x;
   const outY = clipped.y;
 
-  // ラベル位置：source = cell center なので、t=0.55 で cell 外側に置く。
-  const t = 0.55;
-  const labelX = ringX + (outX - ringX) * t;
-  const labelY = ringY + (outY - ringY) * t;
+  // ラベル位置：4×4 のカードに被らないよう、必ず cell の outer edge より外側に置く。
+  // 1) cell rect から方向 (ux,uy) で出た点を起点に、固定マージン LABEL_OUTSIDE_MARGIN_VB 外側へ。
+  // 2) viewBox 境界余白の内側へクランプ（端から LABEL_VIEW_MARGIN_VB 以上離す）。
+  const cellRect = cellRectPct(col, row, L);
+  const exit = rayExitRect(ringX, ringY, outX, outY, cellRect.l, cellRect.t, cellRect.r, cellRect.b);
+  const LABEL_OUTSIDE_MARGIN_VB = 3;
+  let labelX = exit.x + ux * LABEL_OUTSIDE_MARGIN_VB;
+  let labelY = exit.y + uy * LABEL_OUTSIDE_MARGIN_VB;
+  const LABEL_VIEW_MARGIN_VB = 4;
+  labelX = Math.max(LABEL_VIEW_MARGIN_VB, Math.min(100 - LABEL_VIEW_MARGIN_VB, labelX));
+  labelY = Math.max(LABEL_VIEW_MARGIN_VB, Math.min(100 - LABEL_VIEW_MARGIN_VB, labelY));
 
   return { ringX, ringY, outX, outY, labelX, labelY };
 }
@@ -1056,7 +1063,7 @@ function RingKeywordLabels({
             type="button"
             title="クリックで接続の理由（全文）を表示"
             className={[
-              "pointer-events-auto absolute min-w-[110px] max-w-[min(30vw,140px)] -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-2xl border border-indigo-200/60 bg-white/65 px-2 py-0.5 text-center text-[9px] font-medium leading-tight text-indigo-700 shadow-sm backdrop-blur-[3px] transition hover:border-indigo-300 hover:bg-white/95 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2",
+              "pointer-events-auto absolute min-w-[110px] max-w-[min(30vw,140px)] -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-2xl border border-indigo-200/60 bg-white/65 px-2 py-0.5 text-center text-[11px] font-medium leading-tight text-indigo-700 shadow-sm backdrop-blur-[3px] transition hover:border-indigo-300 hover:bg-white/95 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2",
               isHovered ? "z-50 border-indigo-300 bg-white/95 shadow-md" : "z-30",
             ].join(" ")}
             style={{ left: `${it.leftPct}%`, top: `${it.topPct}%` }}
@@ -1535,6 +1542,46 @@ function MapGridCell({
 export function GlobalMapSvg({ focusUrl, synapses, onFocusUrl }: Props) {
   const focusNorm = useMemo(() => normalizeSynapseEndpoint(focusUrl), [focusUrl]);
 
+  // ドラッグで pan
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragStart, setDragStart] = useState<{ x: number; y: number; px: number; py: number } | null>(null);
+  const didDragRef = useRef(false);
+
+  const onPanMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    didDragRef.current = false;
+    setDragStart({ x: e.clientX, y: e.clientY, px: pan.x, py: pan.y });
+  }, [pan.x, pan.y]);
+
+  useEffect(() => {
+    if (!dragStart) return;
+    const DRAG_THRESHOLD = 5;
+    const move = (e: MouseEvent) => {
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      if (!didDragRef.current && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+        didDragRef.current = true;
+      }
+      setPan({ x: dragStart.px + dx, y: dragStart.py + dy });
+    };
+    const up = () => setDragStart(null);
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    return () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+    };
+  }, [dragStart]);
+
+  // drag だった場合は子の click を抑制（capture phase で stopPropagation）
+  const onPanClickCapture = useCallback((e: React.MouseEvent) => {
+    if (didDragRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+      didDragRef.current = false;
+    }
+  }, []);
+
   // 全ユニークノード
   const nodeNorms = useMemo(() => {
     const set = new Set<string>();
@@ -1597,7 +1644,12 @@ export function GlobalMapSvg({ focusUrl, synapses, onFocusUrl }: Props) {
   }
 
     return (
-    <div className="flex h-full w-full items-center justify-center overflow-auto p-1 sm:p-2">
+    <div
+      className="flex h-full w-full items-center justify-center overflow-hidden p-1 sm:p-2"
+      onMouseDown={onPanMouseDown}
+      onClickCapture={onPanClickCapture}
+      style={{ cursor: dragStart ? "grabbing" : "grab", touchAction: "none" }}
+    >
       {/* グリッドコンテナ（アスペクト比固定）*/}
       <div
         className="relative w-full"
@@ -1605,6 +1657,8 @@ export function GlobalMapSvg({ focusUrl, synapses, onFocusUrl }: Props) {
           aspectRatio: `${GLOBAL_COLS} / ${GLOBAL_ROWS}`,
           maxHeight: "86vh",
           maxWidth: `${(GLOBAL_COLS / GLOBAL_ROWS) * 86}vh`,
+          transform: `translate(${pan.x}px, ${pan.y}px)`,
+          willChange: "transform",
         }}
       >
         {/* CSS グリッド */}
@@ -1666,6 +1720,32 @@ export function GlobalMapSvg({ focusUrl, synapses, onFocusUrl }: Props) {
             });
           })()}
         </svg>
+
+        {/* キーワードラベル HTML オーバーレイ（line midpoint 配置） */}
+        <div className="pointer-events-none absolute inset-0">
+          {synapses.map((s) => {
+            const sn = normalizeSynapseEndpoint(s.source_url);
+            const tn = normalizeSynapseEndpoint(s.target_url);
+            const srcPos = normToGridPos.get(sn);
+            const tgtPos = normToGridPos.get(tn);
+            if (!srcPos || !tgtPos) return null;
+            const label = pickEdgeKeyword(s);
+            if (!label) return null;
+            const [sr, sc] = srcPos;
+            const [tr, tc] = tgtPos;
+            const midColPct = (((sc + tc) / 2 + 0.5) / GLOBAL_COLS) * 100;
+            const midRowPct = (((sr + tr) / 2 + 0.5) / GLOBAL_ROWS) * 100;
+            return (
+              <div
+                key={s.id}
+                className="absolute max-w-[140px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-indigo-200/60 bg-white/75 px-2 py-0.5 text-center text-[10px] font-medium leading-tight text-indigo-700 shadow-sm backdrop-blur-[2px]"
+                style={{ left: `${midColPct}%`, top: `${midRowPct}%` }}
+              >
+                <span className="line-clamp-2 break-words">{label}</span>
+              </div>
+            );
+          })}
+        </div>
 
         {/* 軸ラベル（グリッド隅に小さく） */}
         <span className="pointer-events-none absolute left-1 top-1 select-none text-[9px] font-semibold text-amber-500/70">文系</span>
