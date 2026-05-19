@@ -18,5 +18,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   // いいね合計
   const totalLikes = (synapses ?? []).reduce((sum, s) => sum + (s.likes_count ?? 0), 0);
 
-  return NextResponse.json({ synapses: synapses ?? [], totalLikes, postCount: (synapses ?? []).length });
+  // 表示名（nickname → full_name → email → id-snippet）
+  let displayName = userId.slice(0, 12);
+  try {
+    const { data: userResult } = await supabase.auth.admin.getUserById(userId);
+    const meta = userResult?.user?.user_metadata;
+    displayName =
+      (meta?.nickname as string | undefined) ??
+      (meta?.full_name as string | undefined) ??
+      userResult?.user?.email ??
+      userId.slice(0, 12);
+  } catch { /* noop */ }
+
+  return NextResponse.json({
+    synapses: synapses ?? [],
+    totalLikes,
+    postCount: (synapses ?? []).length,
+    displayName,
+  });
 }

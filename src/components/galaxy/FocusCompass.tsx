@@ -57,14 +57,14 @@ const RING_GRID_POS: readonly (readonly [number, number])[] = [
  *
  * 重心 = (0,0) なので balanced ノードは中央に来る。
  */
-const TRIANGLE_POLES = {
+export const TRIANGLE_POLES = {
   rika:   { x:  1.0,  y: -0.5 },
   bunkei: { x: -1.0,  y: -0.5 },
   art:    { x:  0.0,  y:  1.0 },
 } as const;
 
 /** DimProfile → グローバルスクリーン座標（三角形投影） */
-function nodeGlobalScreenXY(p: DimProfile): { x: number; y: number } {
+export function nodeGlobalScreenXY(p: DimProfile): { x: number; y: number } {
   return {
     x: p.rika * TRIANGLE_POLES.rika.x + p.bunkei * TRIANGLE_POLES.bunkei.x + p.art * TRIANGLE_POLES.art.x,
     y: p.rika * TRIANGLE_POLES.rika.y + p.bunkei * TRIANGLE_POLES.bunkei.y + p.art * TRIANGLE_POLES.art.y,
@@ -140,9 +140,9 @@ function dedupeRingEdges(edges: RingEdge[]): RingEdge[] {
     .sort((a, b) => normalizeSynapseEndpoint(a.previewUrl).localeCompare(normalizeSynapseEndpoint(b.previewUrl)));
 }
 
-const ogpMiniCache = new Map<string, { title: string | null; imageUrl: string | null }>();
+export const ogpMiniCache = new Map<string, { title: string | null; imageUrl: string | null }>();
 
-async function fetchOgpMiniPayload(url: string): Promise<{ title: string | null; imageUrl: string | null } | null> {
+export async function fetchOgpMiniPayload(url: string): Promise<{ title: string | null; imageUrl: string | null } | null> {
   async function load(refresh: boolean) {
     const qs = new URLSearchParams({ url });
     if (refresh) qs.set("refresh", "1");
@@ -187,7 +187,7 @@ async function fetchOgpDisplayLabel(url: string): Promise<string> {
 
 // ── いいねボタン ────────────────────────────────────────────────────────────
 
-function LikeButton({ synapse, accessToken }: { synapse: SynapseRow; accessToken: string | null }) {
+export function LikeButton({ synapse, accessToken }: { synapse: SynapseRow; accessToken: string | null }) {
   const [liked, setLiked] = useState(false);
   const [count, setCount] = useState(synapse.likes_count ?? 0);
   const [loading, setLoading] = useState(false);
@@ -242,7 +242,7 @@ function LikeButton({ synapse, accessToken }: { synapse: SynapseRow; accessToken
 
 // ── OGPタイル ────────────────────────────────────────────────────────────────
 
-function OgpTileMedia({
+export function OgpTileMedia({
   pageUrl, imageUrl, slot, loading, eager, onError,
 }: {
   pageUrl: string;
@@ -271,7 +271,7 @@ function OgpTileMedia({
   );
 }
 
-function SynapseConnectionTitles({ synapse, focusNorm }: { synapse: SynapseRow; focusNorm: string }) {
+export function SynapseConnectionTitles({ synapse, focusNorm }: { synapse: SynapseRow; focusNorm: string }) {
   const srcN = normalizeSynapseEndpoint(synapse.source_url);
   const tgtN = normalizeSynapseEndpoint(synapse.target_url);
   const sourceActive = srcN === focusNorm;
@@ -305,7 +305,7 @@ function SynapseConnectionTitles({ synapse, focusNorm }: { synapse: SynapseRow; 
   );
 }
 
-function ConnectionWorksLine({ sourceUrl, targetUrl, focusUrl }: { sourceUrl: string; targetUrl: string; focusUrl: string }) {
+export function ConnectionWorksLine({ sourceUrl, targetUrl, focusUrl }: { sourceUrl: string; targetUrl: string; focusUrl: string }) {
   const [from, setFrom] = useState<string | null>(null);
   const [to, setTo] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -355,17 +355,17 @@ type NodeGravity = {
   chainLike: boolean;
 };
 
-type DimProfile = {
+export type DimProfile = {
   rika: number;
   bunkei: number;
   art: number;
   time: number;
 };
 
-type DominantDim = "rika" | "bunkei" | "art" | "balanced";
+export type DominantDim = "rika" | "bunkei" | "art" | "balanced";
 
 /** シナプスの dim_* フィールドを DimProfile に変換（null は除外） */
-function synapseToDims(s: SynapseRow): DimProfile | null {
+export function synapseToDims(s: SynapseRow): DimProfile | null {
   if (s.dim_rika == null || s.dim_bunkei == null || s.dim_art == null || s.dim_time == null) return null;
   return { rika: s.dim_rika, bunkei: s.dim_bunkei, art: s.dim_art, time: s.dim_time };
 }
@@ -375,7 +375,7 @@ function synapseToDims(s: SynapseRow): DimProfile | null {
  * = グローバルマップ上のそのノードの「座標」に相当する。
  * 次元データが1件もなければ null。
  */
-function computeNodeDimProfile(norm: string, synapses: SynapseRow[]): DimProfile | null {
+export function computeNodeDimProfile(norm: string, synapses: SynapseRow[]): DimProfile | null {
   const profiles: DimProfile[] = [];
   for (const s of synapses) {
     const srcN = normalizeSynapseEndpoint(s.source_url);
@@ -424,7 +424,7 @@ function computeDimAlignment(focus: DimProfile, synapse: DimProfile): number {
 }
 
 /** シナプス次元の支配的な軸を返す */
-function getDominantDim(d: DimProfile): DominantDim {
+export function getDominantDim(d: DimProfile): DominantDim {
   const max = Math.max(d.rika, d.bunkei, d.art);
   if (max < 2) return "balanced";
   if (d.rika === max) return "rika";

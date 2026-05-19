@@ -4,8 +4,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { SynapseRow } from "@/lib/supabase/clients";
-import { FocusCompass } from "./FocusCompass";
+import { GraphView } from "./GraphView";
 import { Header } from "./Header";
+import { NicknameModal } from "./NicknameModal";
 import { createBrowserClient } from "@/lib/supabase/browser";
 
 function mostConnectedUrl(synapses: SynapseRow[]): string | null {
@@ -139,6 +140,14 @@ export function GalaxyApp() {
 
   const handleFocusUrl = useCallback((url: string) => {
     setFocusUrl(url);
+    if (typeof window !== "undefined") {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        params.set("focus", url);
+        const next = `${window.location.pathname}?${params.toString()}`;
+        window.history.replaceState(null, "", next);
+      } catch { /* noop */ }
+    }
     if (userPostCount >= GATE_POST_COUNT) return;
     const limit = user ? GATE_LOGGED : GATE_UNLOGGED;
     const next = viewCount + 1;
@@ -170,8 +179,8 @@ export function GalaxyApp() {
         <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,rgba(99,102,241,0.05),transparent_60%)]" />
         <AnimatePresence mode="wait">
           {focusUrl ? (
-            <motion.div key={focusUrl} initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.99 }} transition={{ duration: 0.25 }} className="h-full w-full">
-              <FocusCompass focusUrl={focusUrl} synapses={synapses} onFocusUrl={handleFocusUrl} />
+            <motion.div key="graph" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="h-full w-full">
+              <GraphView focusUrl={focusUrl} synapses={synapses} onFocusUrl={handleFocusUrl} />
             </motion.div>
           ) : (
             <div key="loading" className="flex h-full items-center justify-center text-sm text-zinc-400">読み込み中…</div>
@@ -196,6 +205,19 @@ export function GalaxyApp() {
               const next = user ? GATE_LOGGED - 5 : GATE_UNLOGGED - 3;
               setViewCount(Math.max(0, next));
               saveViewCount(Math.max(0, next));
+            }}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      {/* ニックネーム入力モーダル (初回ログイン時のみ・必須入力) */}
+      <AnimatePresence>
+        {user && !user.user_metadata?.nickname ? (
+          <NicknameModal
+            key="nickname-modal"
+            user={user}
+            onSet={(nickname) => {
+              setUser((prev) => prev ? ({ ...prev, user_metadata: { ...prev.user_metadata, nickname } }) : prev);
             }}
           />
         ) : null}

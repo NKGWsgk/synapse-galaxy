@@ -1,0 +1,1914 @@
+"use client";
+
+import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import * as d3 from "d3-force";
+
+import { isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
+import { ContentPlatformMark, detectContentPlatform } from "@/components/galaxy/ContentPlatformMark";
+import type { SynapseRow } from "@/lib/supabase/clients";
+import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
+import { isAmazonUrl, withAmazonAffiliate } from "@/lib/amazon";
+import { createBrowserClient } from "@/lib/supabase/browser";
+import {
+  LikeButton,
+  OgpTileMedia,
+  SynapseConnectionTitles,
+  ConnectionWorksLine,
+  ogpMiniCache,
+  fetchOgpMiniPayload,
+  synapseToDims,
+  computeNodeDimProfile,
+  getDominantDim,
+  nodeGlobalScreenXY,
+  type DominantDim,
+} from "./FocusCompass";
+
+type Props = {
+  focusUrl: string;
+  synapses: SynapseRow[];
+  onFocusUrl: (url: string) => void;
+};
+
+// ── Layout constants ─────────────────────────────────────────────────────────
+
+/** Card rectangle dimensions (px in canvas coords) */
+const CARD_W = 140;
+const CARD_H = 110;
+
+/** Collision radius — slightly larger than card half-diagonal to keep spacing */
+const NODE_RADIUS = 92;
+
+/** Link target distance — distance between connected nodes.
+ *  Sized so 12 cards at 30° spacing don't overlap (tangential gap at 290 was
+ *  marginal at diagonal angles) AND so a 2-line label fits along the spoke:
+ *  visible line = LINK_DISTANCE - 2 * cardHalfW = 340 - 140 = 200px. */
+const LINK_DISTANCE = 340;
+
+/** Dim anchor radius. Direction is determined by the node's dim profile; distance
+ *  is capped at LINK_DISTANCE so the dim force only nudges direction, never pushes
+ *  nodes farther out than link force wants. */
+const DIM_ANCHOR_RADIUS = LINK_DISTANCE;
+
+/** Pole label scale (just for the background labels — these can sit further out
+ *  to suggest "this side of the canvas leans rika/bunkei/art"). */
+const POLE_LABEL_RADIUS = 520;
+
+/** N-hop neighborhood cap */
+const MAX_NODES = 60;
+
+/** Pole label positions (px in canvas coords) */
+const POLES = {
+  rika:   { x:  POLE_LABEL_RADIUS * 1.0,  y: -POLE_LABEL_RADIUS * 0.5 },
+  bunkei: { x: -POLE_LABEL_RADIUS * 1.0,  y: -POLE_LABEL_RADIUS * 0.5 },
+  art:    { x:  0,                        y:  POLE_LABEL_RADIUS * 1.0 },
+};
+
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 2.5;
+
+// ── Color & dominant-dim ─────────────────────────────────────────────────────
+
+const DIM_STROKE: Record<DominantDim, string> = {
+  rika:     "rgba(59,130,246,0.72)",
+  bunkei:   "rgba(234,179,8,0.78)",
+  art:      "rgba(244,63,94,0.72)",
+  balanced: "rgba(99,102,241,0.55)",
+};
+
+const DIM_MARKER: Record<DominantDim, string> = {
+  rika:     "#3b82f6",
+  bunkei:   "#eab308",
+  art:      "#f43f5e",
+  balanced: "#6366f1",
+};
+
+// ── Graph construction ───────────────────────────────────────────────────────
+
+type GraphNode = {
+  norm: string;
+  url: string; // canonical url to use when clicking (one of the endpoints)
+  isHub: boolean;
+  hop: 1 | 2; // hub is treated as hop 0; non-hub hop=1 or 2
+  dimAnchorX: number;
+  dimAnchorY: number;
+  // d3-force simulation fields (mutated by sim)
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  fx?: number | null;
+  fy?: number | null;
+};
+
+type GraphLink = {
+  // d3 mutates these from strings/ids to node refs after init — we keep both via id().
+  source: string | GraphNode;
+  target: string | GraphNode;
+  /** Representative synapse for this pair (most-liked). */
+  synapse: SynapseRow;
+  /** All synapses for this directed pair (source → target), sorted by likes desc. */
+  synapses: SynapseRow[];
+  dominant: DominantDim;
+  /** Representative keyword (from the most-liked synapse). */
+  keyword: string | null;
+  /** Stacked keywords from other synapses for the same pair (max 2 visible peek). */
+  stackedKeywords: string[];
+};
+
+function pickEdgeKeyword(s: SynapseRow): string | null {
+  const k = s.keywords?.find((x) => x && x.trim());
+  return k ? k.trim() : null;
+}
+
+function computeAnchorForNorm(norm: string, synapses: SynapseRow[]): { x: number; y: number } {
+  const p = computeNodeDimProfile(norm, synapses);
+  if (!p) return { x: 0, y: 0 };
+  const xy = nodeGlobalScreenXY(p);
+  const mag = Math.hypot(xy.x, xy.y);
+  if (mag < 0.5) return { x: 0, y: 0 };
+  // Normalize to a fixed radius. Direction is preserved, distance is *not* allowed
+  // to grow with how strongly the node leans toward a dim pole. This way the link
+  // force alone determines distance; dim only nudges direction.
+  const ux = xy.x / mag;
+  const uy = xy.y / mag;
+  return { x: ux * DIM_ANCHOR_RADIUS, y: uy * DIM_ANCHOR_RADIUS };
+}
+
+type NeighborMap = Map<string, Set<string>>;
+
+/** Build adjacency map keyed by normalized URL */
+function buildNeighborMap(synapses: SynapseRow[]): { neighbors: NeighborMap; urlForNorm: Map<string, string> } {
+  const neighbors: NeighborMap = new Map();
+  const urlForNorm = new Map<string, string>();
+  for (const s of synapses) {
+    const sN = normalizeSynapseEndpoint(s.source_url);
+    const tN = normalizeSynapseEndpoint(s.target_url);
+    if (!urlForNorm.has(sN)) urlForNorm.set(sN, s.source_url);
+    if (!urlForNorm.has(tN)) urlForNorm.set(tN, s.target_url);
+    if (!neighbors.has(sN)) neighbors.set(sN, new Set());
+    if (!neighbors.has(tN)) neighbors.set(tN, new Set());
+    neighbors.get(sN)!.add(tN);
+    neighbors.get(tN)!.add(sN);
+  }
+  return { neighbors, urlForNorm };
+}
+
+function buildGraph(focusUrl: string, synapses: SynapseRow[]): { nodes: GraphNode[]; links: GraphLink[] } {
+  const focusNorm = normalizeSynapseEndpoint(focusUrl);
+  const { neighbors, urlForNorm } = buildNeighborMap(synapses);
+
+  // Ensure focus url is in urlForNorm even if not yet in synapses
+  if (!urlForNorm.has(focusNorm)) urlForNorm.set(focusNorm, focusUrl);
+
+  const hopMap = new Map<string, 1 | 2>();
+  const oneHop = neighbors.get(focusNorm) ?? new Set<string>();
+  for (const n of oneHop) {
+    if (n === focusNorm) continue;
+    hopMap.set(n, 1);
+  }
+  for (const n1 of oneHop) {
+    const further = neighbors.get(n1) ?? new Set<string>();
+    for (const n2 of further) {
+      if (n2 === focusNorm) continue;
+      if (hopMap.has(n2)) continue;
+      hopMap.set(n2, 2);
+    }
+  }
+
+  // Degree, likes count for ranking
+  function degree(norm: string): number {
+    return neighbors.get(norm)?.size ?? 0;
+  }
+  function likesFor(norm: string): number {
+    let v = 0;
+    for (const s of synapses) {
+      const sN = normalizeSynapseEndpoint(s.source_url);
+      const tN = normalizeSynapseEndpoint(s.target_url);
+      if (sN === norm || tN === norm) v = Math.max(v, s.likes_count ?? 0);
+    }
+    return v;
+  }
+
+  // Cap to MAX_NODES total (hub + neighborhood). Drop lowest-priority 2-hop first.
+  let memberNorms: string[] = [focusNorm, ...hopMap.keys()];
+  const totalIncludingHub = memberNorms.length;
+  if (totalIncludingHub > MAX_NODES) {
+    // Separate by hop, sort 2-hop by priority (drop bottom)
+    const oneHopArr: string[] = [];
+    const twoHopArr: string[] = [];
+    for (const [n, h] of hopMap) (h === 1 ? oneHopArr : twoHopArr).push(n);
+    twoHopArr.sort((a, b) => {
+      const la = likesFor(a), lb = likesFor(b);
+      if (la !== lb) return lb - la;
+      const da = degree(a), db = degree(b);
+      if (da !== db) return db - da;
+      return a.localeCompare(b);
+    });
+    const remainingSlots = MAX_NODES - 1 - oneHopArr.length;
+    const keptTwo = remainingSlots > 0 ? twoHopArr.slice(0, remainingSlots) : [];
+    memberNorms = [focusNorm, ...oneHopArr, ...keptTwo];
+  }
+
+  const memberSet = new Set(memberNorms);
+  const nodes: GraphNode[] = memberNorms.map((norm) => {
+    const isHub = norm === focusNorm;
+    const a = computeAnchorForNorm(norm, synapses);
+    return {
+      norm,
+      url: urlForNorm.get(norm) ?? norm,
+      isHub,
+      hop: isHub ? 1 : (hopMap.get(norm) ?? 1),
+      dimAnchorX: a.x,
+      dimAnchorY: a.y,
+    };
+  });
+
+  // Build links for synapses whose both endpoints are members.
+  // Aggregate ALL synapses with the same directed (source, target) pair into
+  // a single GraphLink so the renderer can show stacked keywords and a
+  // thicker line for richer connections.
+  const linksByPair = new Map<string, GraphLink>();
+  for (const s of synapses) {
+    const sN = normalizeSynapseEndpoint(s.source_url);
+    const tN = normalizeSynapseEndpoint(s.target_url);
+    if (!memberSet.has(sN) || !memberSet.has(tN)) continue;
+    if (sN === tN) continue;
+    const key = `${sN}::${tN}`;
+    const existing = linksByPair.get(key);
+    if (existing) {
+      existing.synapses.push(s);
+    } else {
+      const d = synapseToDims(s);
+      const dominant: DominantDim = d ? getDominantDim(d) : "balanced";
+      linksByPair.set(key, {
+        source: sN,
+        target: tN,
+        synapse: s,
+        synapses: [s],
+        dominant,
+        keyword: pickEdgeKeyword(s),
+        stackedKeywords: [],
+      });
+    }
+  }
+  // Within each pair, sort synapses by likes desc → representative = most liked.
+  // Stack peeking labels from up to 2 next-most-liked synapses (with different keywords).
+  const links: GraphLink[] = [];
+  for (const l of linksByPair.values()) {
+    l.synapses.sort((a, b) => (b.likes_count ?? 0) - (a.likes_count ?? 0));
+    l.synapse = l.synapses[0];
+    l.keyword = pickEdgeKeyword(l.synapse);
+    const seenKw = new Set<string>();
+    if (l.keyword) seenKw.add(l.keyword);
+    l.stackedKeywords = [];
+    for (let i = 1; i < l.synapses.length && l.stackedKeywords.length < 2; i++) {
+      const k = pickEdgeKeyword(l.synapses[i]);
+      if (k && !seenKw.has(k)) {
+        seenKw.add(k);
+        l.stackedKeywords.push(k);
+      }
+    }
+    links.push(l);
+  }
+
+  return { nodes, links };
+}
+
+// ── Ray-rect intersection: shorten line so arrow tip lands on target card edge ─
+
+function rayRectIntersection(
+  cx: number, cy: number,
+  tx: number, ty: number,
+  halfW: number, halfH: number,
+): { x: number; y: number } {
+  // Ray from (cx,cy) outward to (tx,ty) — we want the intersection with the rect
+  // centered on (tx,ty). Reverse: from target center to source center, find exit point.
+  const dx = cx - tx;
+  const dy = cy - ty;
+  if (dx === 0 && dy === 0) return { x: tx, y: ty };
+  const sx = dx === 0 ? Infinity : halfW / Math.abs(dx);
+  const sy = dy === 0 ? Infinity : halfH / Math.abs(dy);
+  const t = Math.min(sx, sy);
+  return { x: tx + dx * t, y: ty + dy * t };
+}
+
+// ── Card component ───────────────────────────────────────────────────────────
+
+function GraphCard({
+  url,
+  isFocus,
+  loadingHint,
+  onPointerDown,
+}: {
+  url: string;
+  isFocus: boolean;
+  loadingHint?: boolean;
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+}) {
+  const [data, setData] = useState<{ title: string | null; imageUrl: string | null } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    let cancel = false;
+    const hit = ogpMiniCache.get(url);
+    if (hit) {
+      const label = resolveContentDisplayTitle(hit.title, url);
+      if (!isWeakContentTitleLabel(label, url) && (hit.imageUrl ?? "").trim()) {
+        setData(hit); setLoading(false); return;
+      }
+      ogpMiniCache.delete(url);
+    }
+    setLoading(true);
+    void fetchOgpMiniPayload(url)
+      .then((o) => { if (!cancel) setData(o ?? { title: null, imageUrl: null }); })
+      .catch(() => { if (!cancel) setData({ title: null, imageUrl: null }); })
+      .finally(() => { if (!cancel) setLoading(false); });
+    return () => { cancel = true; };
+  }, [url]);
+
+  const displayTitle = resolveContentDisplayTitle(data?.title ?? null, url).slice(0, 60);
+  const showImage = !!data?.imageUrl && !imgError;
+
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      className={[
+        "relative flex flex-col overflow-hidden rounded-xl bg-white text-left shadow-[0_3px_12px_rgba(0,0,0,0.08)] transition-transform duration-150 will-change-transform",
+        isFocus ? "ring-2 ring-indigo-400" : "ring-1 ring-zinc-200/70",
+        loadingHint ? "" : "hover:scale-[1.04] hover:z-30",
+      ].join(" ")}
+      style={{ width: CARD_W, height: CARD_H, cursor: "pointer", touchAction: "none" }}
+    >
+      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+        <OgpTileMedia
+          pageUrl={url}
+          imageUrl={showImage ? data!.imageUrl : null}
+          slot="gridMini"
+          loading={loading}
+          onError={() => setImgError(true)}
+        />
+      </div>
+      <p
+        className="line-clamp-2 h-[2.6em] max-h-[2.6em] shrink-0 overflow-hidden px-1.5 py-1 text-center text-[11px] font-medium leading-tight text-zinc-900"
+        title={displayTitle}
+      >
+        {displayTitle}
+      </p>
+      <ContentPlatformMark pageUrl={url} />
+    </div>
+  );
+}
+
+// ── Edge label (midpoint pill) ───────────────────────────────────────────────
+
+function EdgeLabel({
+  midX, midY, keyword, stackedKeywords, onClick,
+}: {
+  midX: number; midY: number; keyword: string;
+  stackedKeywords?: string[];
+  onClick: (e: React.MouseEvent) => void;
+}) {
+  // Stack peek visuals: render up to 2 phantom labels behind the top one,
+  // offset slightly. They're decorative only — clicking the top label opens
+  // the modal that cycles through all synapses.
+  const peeks = stackedKeywords ?? [];
+  // Slightly taller foreignObject to accommodate peeks
+  const extraHeight = peeks.length * 6;
+  return (
+    <foreignObject x={midX - 70} y={midY - 22 - extraHeight} width={140} height={44 + extraHeight} style={{ overflow: "visible", pointerEvents: "auto" }}>
+      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+        {/* Phantom peeking labels (behind the main one) */}
+        {peeks.map((_, idx) => {
+          const depth = idx + 1; // 1, 2
+          return (
+            <div
+              key={idx}
+              aria-hidden
+              className="pointer-events-none absolute max-w-[140px] rounded-2xl border border-indigo-100 bg-white px-2 py-1 text-center text-[10px] font-semibold leading-snug text-indigo-400 shadow-sm"
+              style={{
+                top: `calc(50% - ${depth * 4}px)`,
+                left: `${depth * 4}px`,
+                right: `${depth * 4}px`,
+                transform: "translateY(-50%)",
+                opacity: 0.6 - depth * 0.15,
+                zIndex: 0,
+                height: "1.8em",
+                overflow: "hidden",
+              }}
+            />
+          );
+        })}
+        <button
+          type="button"
+          onClick={onClick}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="pointer-events-auto relative z-10 max-w-[140px] rounded-2xl border border-indigo-100 bg-white/95 px-2 py-1 text-center text-[10px] font-semibold leading-snug text-indigo-700 shadow-sm transition hover:max-w-[260px] hover:border-indigo-300 hover:bg-white hover:text-indigo-800 hover:z-50"
+          style={{
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+            wordBreak: "break-word",
+          }}
+          title={peeks.length > 0 ? `${keyword} (他${peeks.length}件)` : keyword}
+        >
+          {keyword}
+        </button>
+      </div>
+    </foreignObject>
+  );
+}
+
+// ── Keyword-note modal helper components ────────────────────────────────────
+
+/** 2作品名を framed で表示（バンド背景なし、ラベルなし）。
+ *  「シナプス」ラベル付きの ConnectionWorksLine の slim 版。
+ *  作品クリックでそのページへ遷移できる（onClickWork コールバック経由）。 */
+function KeywordModalWorksLine({ sourceUrl, targetUrl, focusUrl, onClickWork }: {
+  sourceUrl: string;
+  targetUrl: string;
+  focusUrl: string;
+  onClickWork?: (url: string) => void;
+}) {
+  const [from, setFrom] = useState<string | null>(null);
+  const [to, setTo] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void Promise.all([
+      fetch(`/api/ogp?url=${encodeURIComponent(sourceUrl)}`).then((r) => r.json()).then((j) => resolveContentDisplayTitle(j.title ?? null, sourceUrl)),
+      fetch(`/api/ogp?url=${encodeURIComponent(targetUrl)}`).then((r) => r.json()).then((j) => resolveContentDisplayTitle(j.title ?? null, targetUrl)),
+    ])
+      .then(([a, b]) => { if (cancelled) return; setFrom(a); setTo(b); setLoading(false); })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sourceUrl, targetUrl]);
+
+  // Truncate display titles to a uniform max length so both boxes look balanced.
+  const MAX = 22;
+  const truncate = (s: string) => (s.length > MAX ? s.slice(0, MAX - 1) + "…" : s);
+  const leftRaw = loading ? "取得中…" : (from ?? sourceUrl);
+  const rightRaw = loading ? "取得中…" : (to ?? targetUrl);
+  const left = truncate(leftRaw);
+  const right = truncate(rightRaw);
+  const focusNorm = normalizeSynapseEndpoint(focusUrl);
+  const srcActive = normalizeSynapseEndpoint(sourceUrl) === focusNorm;
+  const tgtActive = normalizeSynapseEndpoint(targetUrl) === focusNorm;
+  // Fixed widths + fixed height + 2-line clamp = balanced boxes regardless of title length.
+  const baseCls = "flex h-12 w-40 items-center justify-center rounded-lg px-2.5 py-1.5 text-center text-[11px] leading-snug ring-1 ring-inset transition";
+  const activeCls = `${baseCls} bg-indigo-50 font-bold text-indigo-700 ring-indigo-200 hover:bg-indigo-100`;
+  const mutedCls  = `${baseCls} bg-white font-medium text-zinc-600 ring-zinc-200 hover:bg-zinc-50 hover:text-indigo-700 hover:ring-indigo-200`;
+  return (
+    <div className="shrink-0 border-b border-zinc-100 px-4 py-3 sm:px-5">
+      <div className="flex items-center justify-center gap-3">
+        <button
+          type="button"
+          onClick={() => onClickWork?.(sourceUrl)}
+          className={srcActive ? activeCls : mutedCls}
+          title={leftRaw}
+        >
+          <span className="line-clamp-2 break-words">{left}</span>
+        </button>
+        <span className="shrink-0 text-base font-normal text-zinc-400" aria-hidden>→</span>
+        <button
+          type="button"
+          onClick={() => onClickWork?.(targetUrl)}
+          className={tgtActive ? activeCls : mutedCls}
+          title={rightRaw}
+        >
+          <span className="line-clamp-2 break-words">{right}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 詳細パネル内の「関連シナプス」リスト行。視覚的階層：
+ *  1. 相手作品名（枠付きチップ） — 固定幅・truncate
+ *  2. キーワード（「」付き indigo 太字）
+ *  3. 接続理由（小さい muted テキスト）
+ *  4. ♥ いいね（右下）
+ */
+function RelatedSynapseRow({ synapse, direction, focusNorm, accessToken }: {
+  synapse: SynapseRow;
+  direction: "outgoing" | "incoming";
+  focusNorm: string;
+  accessToken: string | null;
+}) {
+  // 「相手」作品 = focus じゃない方
+  const otherUrl = direction === "outgoing" ? synapse.target_url : synapse.source_url;
+  const otherNorm = normalizeSynapseEndpoint(otherUrl);
+  const isFocusSrc = normalizeSynapseEndpoint(synapse.source_url) === focusNorm;
+  // 矢印の向き: focus → other (outgoing), other → focus (incoming)
+  const arrowDir = direction === "outgoing" ? "→" : "←";
+  const arrowSide = direction === "outgoing" ? "left" : "right";
+
+  const [otherTitle, setOtherTitle] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch(`/api/ogp?url=${encodeURIComponent(otherUrl)}`)
+      .then((r) => r.json())
+      .then((j: { title?: string | null }) => { if (!cancelled) setOtherTitle(resolveContentDisplayTitle(j.title ?? null, otherUrl)); })
+      .catch(() => { /* noop */ });
+    return () => { cancelled = true; };
+  }, [otherUrl]);
+
+  const TITLE_MAX = 22;
+  const rawTitle = otherTitle ?? otherUrl;
+  const truncated = rawTitle.length > TITLE_MAX ? rawTitle.slice(0, TITLE_MAX - 1) + "…" : rawTitle;
+  const firstKeyword = synapse.keywords?.find((k) => k && k.trim())?.trim();
+
+  // 矢印の位置を方向で切り替え
+  const arrow = (
+    <span className="shrink-0 text-base font-normal text-zinc-400" aria-hidden>{arrowDir}</span>
+  );
+  const workChip = (
+    <span
+      className="inline-flex h-10 max-w-[180px] items-center justify-center rounded-lg bg-white px-2.5 py-1.5 text-center text-[11px] font-medium leading-snug text-zinc-700 ring-1 ring-inset ring-zinc-200"
+      title={rawTitle}
+    >
+      <span className="line-clamp-2 break-words">{truncated}</span>
+    </span>
+  );
+
+  return (
+    <li className="rounded-lg border border-zinc-200/90 bg-white/90 px-3 py-2.5">
+      {/* Top: 相手作品名 (chip) + 矢印 */}
+      <div className="mb-2 flex items-center gap-2">
+        {arrowSide === "right" ? <>{workChip}{arrow}</> : <>{arrow}{workChip}</>}
+        <span className="text-[10px] font-medium text-zinc-400">
+          {direction === "outgoing" ? "へ繋ぐ" : "から繋がる"}
+        </span>
+      </div>
+      {/* キーワード（接続テーマ） */}
+      {firstKeyword ? (
+        <p className="mb-1.5 text-[13px] font-bold leading-snug text-indigo-700">「{firstKeyword}」</p>
+      ) : null}
+      {/* 接続理由 */}
+      <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-zinc-500">{synapse.description.trim() || "—"}</p>
+      {/* like */}
+      <div className="mt-2 flex items-center justify-end">
+        <LikeButton synapse={synapse} accessToken={accessToken} />
+      </div>
+      {/* unused vars to silence lint */}
+      <span hidden>{otherNorm}{isFocusSrc ? "" : ""}</span>
+    </li>
+  );
+}
+
+/** 投稿者リンク。ID から display name を取得して "投稿者: XXX" を表示 */
+function PosterLink({ userId }: { userId: string }) {
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch(`/api/user/${userId}`)
+      .then((r) => r.json())
+      .then((j: { displayName?: string }) => { if (!cancelled) setName(j.displayName ?? null); })
+      .catch(() => { /* noop */ });
+    return () => { cancelled = true; };
+  }, [userId]);
+  return (
+    <span className="text-[11px] font-medium text-zinc-500">
+      投稿者:{" "}
+      <a
+        href={`/user/${userId}`}
+        className="text-indigo-600 transition hover:text-indigo-800 hover:underline"
+      >
+        {name ?? "…"}
+      </a>
+    </span>
+  );
+}
+
+// ── Main component ──────────────────────────────────────────────────────────
+
+export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState({ w: 0, h: 0 });
+
+  // Camera state. Initial values are overridden by the focus-tween effect once
+  // viewport + world layout are ready.
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(0.62);
+  const panRef = useRef(pan);
+  const zoomRef = useRef(zoom);
+  useEffect(() => { panRef.current = pan; }, [pan]);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+  // Build graph (memoized on focus + synapses identity) — used for VISIBILITY
+  // filtering only (which N=2 nodes to render). Positions come from the global
+  // world layout in worldPositionsRef.
+  const { nodes: builtNodes, links: builtLinks } = useMemo(
+    () => buildGraph(focusUrl, synapses),
+    [focusUrl, synapses],
+  );
+
+  // Global world layout — positions for every node in the DB. Computed once
+  // per `synapses` identity via d3-force pre-settled simulation. Clicking a
+  // card never recomputes these; the camera just pans/zooms.
+  const worldPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  // Simulation refs — these hold ALL world nodes/links (not just visible).
+  // Drag handling reads/writes these.
+  const simNodesRef = useRef<GraphNode[]>([]);
+  const simLinksRef = useRef<GraphLink[]>([]);
+  const simRef = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null);
+  // tick counter triggers re-render on each ticked frame
+  const [, setTick] = useState(0);
+  const rafRef = useRef<number | null>(null);
+
+  // ── Build the GLOBAL world layout (all nodes + all synapses) ──────────────
+  // Runs whenever `synapses` identity changes. Pre-settles d3-force ~400 ticks
+  // synchronously so positions are stable before first paint. Positions for
+  // unchanged nodes are preserved across rebuilds via worldPositionsRef.
+  useEffect(() => {
+    simRef.current?.stop();
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+
+    // 1) Collect ALL nodes + ALL links from the entire synapse set.
+    const { neighbors, urlForNorm } = buildNeighborMap(synapses);
+    const allNorms = Array.from(neighbors.keys());
+
+    // Pick the algorithmic "starting point" — the node with most direct
+    // connections. NOT a semantic center; just the anchor we begin laying out
+    // from. Swappable later for "trending", "user-pinned", etc.
+    function pickStartNorm(): string | null {
+      let bestNorm: string | null = null;
+      let bestDeg = -1;
+      let bestLikes = -1;
+      const likesByNorm = new Map<string, number>();
+      for (const s of synapses) {
+        const sN = normalizeSynapseEndpoint(s.source_url);
+        const tN = normalizeSynapseEndpoint(s.target_url);
+        const l = s.likes_count ?? 0;
+        likesByNorm.set(sN, (likesByNorm.get(sN) ?? 0) + l);
+        likesByNorm.set(tN, (likesByNorm.get(tN) ?? 0) + l);
+      }
+      for (const [norm, set] of neighbors) {
+        const deg = set.size;
+        if (deg === 0) continue; // skip isolated/island nodes
+        const likes = likesByNorm.get(norm) ?? 0;
+        if (
+          deg > bestDeg ||
+          (deg === bestDeg && likes > bestLikes) ||
+          (deg === bestDeg && likes === bestLikes && (bestNorm == null || norm < bestNorm))
+        ) {
+          bestNorm = norm;
+          bestDeg = deg;
+          bestLikes = likes;
+        }
+      }
+      return bestNorm;
+    }
+    const startNorm = pickStartNorm();
+
+    // BFS from start → for each node, record:
+    //   - hop: distance in number of synapse links
+    //   - parent: a neighbor on the previous ring (closer to start)
+    // Used to place each node at hop × LINK_DISTANCE from origin, with its
+    // angular position influenced by its parent's angle (anti-zigzag).
+    const hopByNorm = new Map<string, number>();
+    const parentByNorm = new Map<string, string>();
+    if (startNorm) {
+      hopByNorm.set(startNorm, 0);
+      let frontier: string[] = [startNorm];
+      while (frontier.length > 0) {
+        const next: string[] = [];
+        const sorted = [...frontier].sort(); // deterministic order
+        for (const cur of sorted) {
+          const ns = neighbors.get(cur);
+          if (!ns) continue;
+          const curHop = hopByNorm.get(cur)!;
+          const sortedNs = [...ns].sort();
+          for (const nb of sortedNs) {
+            if (hopByNorm.has(nb)) continue;
+            hopByNorm.set(nb, curHop + 1);
+            parentByNorm.set(nb, cur);
+            next.push(nb);
+          }
+        }
+        frontier = next;
+      }
+    }
+    // Islands: unreachable nodes are placed at a sentinel ring far out.
+    const ISLAND_HOP = 6;
+    for (const norm of allNorms) {
+      if (!hopByNorm.has(norm)) hopByNorm.set(norm, ISLAND_HOP);
+    }
+
+    // Deterministic per-node offset derived from the norm string — replaces
+    // Math.random() so the layout is reproducible across reloads.
+    function hashOffset(s: string): { ox: number; oy: number } {
+      let h1 = 0x811c9dc5 >>> 0;
+      let h2 = 0xdeadbeef >>> 0;
+      for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 16777619) >>> 0;
+        h2 = Math.imul(h2 ^ c, 2246822519) >>> 0;
+      }
+      // Map to roughly -50..+50 px on each axis
+      const ox = (((h1 & 0xffff) / 0xffff) - 0.5) * 100;
+      const oy = (((h2 & 0xffff) / 0xffff) - 0.5) * 100;
+      return { ox, oy };
+    }
+
+    // Position cache is intentionally NOT used as a "preserve existing" mechanism.
+    // Layout is fully recomputed from synapses every time the data changes — a
+    // new work may shift other works to find a globally optimal arrangement.
+    const worldNodes: GraphNode[] = allNorms.map((norm) => {
+      const a = computeAnchorForNorm(norm, synapses);
+      const { ox, oy } = hashOffset(norm);
+      const isStart = norm === startNorm;
+      // Pin the start node to world (0,0) — algorithmic anchor.
+      const initX = isStart ? 0 : (a.x + ox);
+      const initY = isStart ? 0 : (a.y + oy);
+      return {
+        norm,
+        url: urlForNorm.get(norm) ?? norm,
+        isHub: false,
+        hop: 1,
+        dimAnchorX: a.x,
+        dimAnchorY: a.y,
+        x: initX,
+        y: initY,
+        ...(isStart ? { fx: 0, fy: 0 } : {}),
+      };
+    });
+
+    // Aggregate synapses per directed (source, target) pair. Each link carries
+    // the full list of synapses sorted by likes; the most-liked one is the
+    // representative (used for label + click), and up to 2 next keywords are
+    // stacked behind the label.
+    const worldLinksByPair = new Map<string, GraphLink>();
+    for (const s of synapses) {
+      const sN = normalizeSynapseEndpoint(s.source_url);
+      const tN = normalizeSynapseEndpoint(s.target_url);
+      if (sN === tN) continue;
+      const key = `${sN}::${tN}`;
+      const existing = worldLinksByPair.get(key);
+      if (existing) {
+        existing.synapses.push(s);
+      } else {
+        const d = synapseToDims(s);
+        const dominant: DominantDim = d ? getDominantDim(d) : "balanced";
+        worldLinksByPair.set(key, {
+          source: sN,
+          target: tN,
+          synapse: s,
+          synapses: [s],
+          dominant,
+          keyword: pickEdgeKeyword(s),
+          stackedKeywords: [],
+        });
+      }
+    }
+    const worldLinks: GraphLink[] = [];
+    for (const l of worldLinksByPair.values()) {
+      l.synapses.sort((a, b) => (b.likes_count ?? 0) - (a.likes_count ?? 0));
+      l.synapse = l.synapses[0];
+      l.keyword = pickEdgeKeyword(l.synapse);
+      const seen = new Set<string>();
+      if (l.keyword) seen.add(l.keyword);
+      l.stackedKeywords = [];
+      for (let i = 1; i < l.synapses.length && l.stackedKeywords.length < 2; i++) {
+        const k = pickEdgeKeyword(l.synapses[i]);
+        if (k && !seen.has(k)) { seen.add(k); l.stackedKeywords.push(k); }
+      }
+      worldLinks.push(l);
+    }
+
+    if (worldNodes.length === 0) {
+      simNodesRef.current = [];
+      simLinksRef.current = [];
+      worldPositionsRef.current = new Map();
+      setTick((t) => (t + 1) % 1000000);
+      return;
+    }
+
+    // ── Triangle detection: links that participate in a triangle (3 mutually
+    //    connected nodes) get a stronger link strength. This makes tightly-
+    //    interconnected groups clump together as a unit without us having to
+    //    explicitly "detect clusters" — the structure emerges from the rule.
+    const undirectedNeighborSets = new Map<string, Set<string>>();
+    for (const l of worldLinks) {
+      const sN = typeof l.source === "string" ? l.source : (l.source as GraphNode).norm;
+      const tN = typeof l.target === "string" ? l.target : (l.target as GraphNode).norm;
+      if (!undirectedNeighborSets.has(sN)) undirectedNeighborSets.set(sN, new Set());
+      if (!undirectedNeighborSets.has(tN)) undirectedNeighborSets.set(tN, new Set());
+      undirectedNeighborSets.get(sN)!.add(tN);
+      undirectedNeighborSets.get(tN)!.add(sN);
+    }
+    const triangleLinkKeys = new Set<string>();
+    for (const l of worldLinks) {
+      const sN = typeof l.source === "string" ? l.source : (l.source as GraphNode).norm;
+      const tN = typeof l.target === "string" ? l.target : (l.target as GraphNode).norm;
+      const sNeighbors = undirectedNeighborSets.get(sN)!;
+      const tNeighbors = undirectedNeighborSets.get(tN)!;
+      // Find any third node connected to both endpoints → triangle exists
+      let inTriangle = false;
+      for (const n of sNeighbors) {
+        if (n !== tN && tNeighbors.has(n)) { inTriangle = true; break; }
+      }
+      if (inTriangle) {
+        triangleLinkKeys.add(`${sN}::${tN}`);
+        triangleLinkKeys.add(`${tN}::${sN}`);
+      }
+    }
+
+    // 2) Build d3 simulation. Strong link force + strong charge so topology
+    //    (hop distance) determines physical distance: directly-connected nodes
+    //    sit at LINK_DISTANCE, anything else gets pushed apart. Triangle links
+    //    are 2.5× stronger so clusters clump. A weak uniform outward gravity
+    //    spreads the graph so lines have natural breathing room.
+    const sim = d3
+      .forceSimulation<GraphNode, GraphLink>(worldNodes)
+      .force(
+        "link",
+        d3
+          .forceLink<GraphNode, GraphLink>(worldLinks)
+          .id((d) => d.norm)
+          .distance(LINK_DISTANCE)
+          .strength((l) => {
+            const sN = typeof l.source === "string" ? l.source : (l.source as GraphNode).norm;
+            const tN = typeof l.target === "string" ? l.target : (l.target as GraphNode).norm;
+            // Triangle links are ~50% stronger — strong enough to clump
+            // clusters together, but not so strong that they pull direct
+            // neighbors away from their natural link distance.
+            return triangleLinkKeys.has(`${sN}::${tN}`) ? 1.5 : 1.0;
+          }),
+      )
+      .force(
+        "charge",
+        // Global repulsion (no distanceMax) — keeps 2-hop nodes from collapsing
+        // toward the centroid of their parents.
+        d3.forceManyBody<GraphNode>().strength(-1200),
+      )
+      .force("collide", d3.forceCollide<GraphNode>().radius(NODE_RADIUS).strength(0.92))
+      // Dim gravity: extremely weak — just enough to nudge unconnected clusters
+      // toward their dim pole side. Does not affect link-determined distances.
+      .force(
+        "dimX",
+        d3.forceX<GraphNode>((n) => n.dimAnchorX).strength(0.003),
+      )
+      .force(
+        "dimY",
+        d3.forceY<GraphNode>((n) => n.dimAnchorY).strength(0.003),
+      )
+      // ── Radial anchor: each node is pulled toward radius (hop × LINK_DISTANCE).
+      //    Combined with the pinned start at (0,0) and link force, this makes
+      //    1-hop sit at ring 1 (340), 2-hop at ring 2 (680), etc.
+      .force(
+        "radial",
+        d3.forceRadial<GraphNode>((n) => (hopByNorm.get(n.norm) ?? 1) * LINK_DISTANCE, 0, 0)
+          .strength(0.4),
+      )
+      .alpha(1)
+      .alphaDecay(0.012)
+      .velocityDecay(0.4);
+
+    // 3) Pre-settle more ticks (~700) so stronger forces have time to settle.
+    sim.stop();
+    for (let i = 0; i < 700; i++) sim.tick();
+
+    // 4) SNAP POST-PROCESS — cluster-aware slot assignment per ring.
+    //    - Each node's target ring = hop × LINK_DISTANCE (already enforced by
+    //      forceRadial; snap rounds to exact ring radius).
+    //    - Slot count per ring chosen from preset [3, 6, 9, 12, 18, 24, 36].
+    //    - Slot ordering: children of the same parent → adjacent slots
+    //      (prevents zigzag); triangle members get additional adjacency boost.
+    const RADIUS_STEP = LINK_DISTANCE;
+    const RING_SLOT_PRESETS = [3, 6, 9, 12, 18, 24, 36];
+
+    // Group nodes by ring (= hop)
+    const ringGroups = new Map<number, GraphNode[]>();
+    for (const n of worldNodes) {
+      const hop = hopByNorm.get(n.norm) ?? 1;
+      if (!ringGroups.has(hop)) ringGroups.set(hop, []);
+      ringGroups.get(hop)!.push(n);
+    }
+
+    const snappedById = new Map<string, { x: number; y: number }>();
+    // Place start node at origin
+    if (startNorm) snappedById.set(startNorm, { x: 0, y: 0 });
+
+    // Process rings in order (ring 1, 2, 3, ...) so each ring can use its
+    // parent ring's positions for angle ordering.
+    const ringIndices = [...ringGroups.keys()].sort((a, b) => a - b);
+    for (const hop of ringIndices) {
+      if (hop === 0) continue; // start node already placed
+      const group = ringGroups.get(hop)!;
+      const ringR = hop * RADIUS_STEP;
+      const N = group.length;
+      if (N === 0) continue;
+
+      // Compute "preferred angle" for each node from the circular mean of
+      // ALL already-placed neighbors (any ring), not just the BFS parent.
+      // This way a 2-hop node connected to two 1-hop neighbors lands at
+      // the midpoint angle between them — bringing connected pairs close.
+      function circularMean(angles: number[]): number {
+        if (angles.length === 0) return 0;
+        let sx = 0, sy = 0;
+        for (const a of angles) { sx += Math.cos(a); sy += Math.sin(a); }
+        return Math.atan2(sy, sx);
+      }
+      type WithAngle = { node: GraphNode; prefAngle: number; placedNeighborCount: number };
+      const withAngle: WithAngle[] = group.map((n) => {
+        const ns = neighbors.get(n.norm);
+        const placedAngles: number[] = [];
+        if (ns) {
+          for (const nb of ns) {
+            const p = snappedById.get(nb);
+            if (p) placedAngles.push(Math.atan2(p.y, p.x));
+          }
+        }
+        let prefAngle: number;
+        if (placedAngles.length > 0) {
+          prefAngle = circularMean(placedAngles);
+        } else {
+          prefAngle = Math.atan2(n.y ?? 0, n.x ?? 0);
+        }
+        if (!isFinite(prefAngle)) prefAngle = 0;
+        return { node: n, prefAngle, placedNeighborCount: placedAngles.length };
+      });
+
+      // Sort by number of placed neighbors descending (most-constrained first),
+      // then by pref angle, then norm. Nodes with more placed neighbors have
+      // less room for adjustment, so we satisfy them first.
+      withAngle.sort((a, b) => {
+        if (a.placedNeighborCount !== b.placedNeighborCount) {
+          return b.placedNeighborCount - a.placedNeighborCount;
+        }
+        if (a.prefAngle !== b.prefAngle) return a.prefAngle - b.prefAngle;
+        return a.node.norm.localeCompare(b.node.norm);
+      });
+
+      // Pick slot count from preset
+      // Slot count chosen so adjacent slots are ~LINK_DISTANCE apart in
+      // tangential space. circumference = 2π * ringR; ideal slot count =
+      // circumference / LINK_DISTANCE. Pick smallest preset ≥ that, and also
+      // ≥ N (so all nodes fit).
+      const idealSlotCount = Math.ceil((2 * Math.PI * ringR) / LINK_DISTANCE);
+      const slotCount = RING_SLOT_PRESETS.find((p) => p >= Math.max(idealSlotCount, N)) ?? RING_SLOT_PRESETS[RING_SLOT_PRESETS.length - 1];
+      const slotAngles: number[] = [];
+      for (let i = 0; i < slotCount; i++) {
+        slotAngles.push((i / slotCount) * 2 * Math.PI - Math.PI);
+      }
+
+      // Assign each node to the nearest free slot to its preferred angle.
+      const takenSlots = new Set<number>();
+      for (const wa of withAngle) {
+        let bestSlot = -1;
+        let bestDist = Infinity;
+        for (let i = 0; i < slotCount; i++) {
+          if (takenSlots.has(i)) continue;
+          let d = Math.abs(wa.prefAngle - slotAngles[i]);
+          if (d > Math.PI) d = 2 * Math.PI - d;
+          if (d < bestDist) { bestDist = d; bestSlot = i; }
+        }
+        if (bestSlot < 0) continue;
+        takenSlots.add(bestSlot);
+        const a = slotAngles[bestSlot];
+        snappedById.set(wa.node.norm, {
+          x: Math.cos(a) * ringR,
+          y: Math.sin(a) * ringR,
+        });
+      }
+    }
+
+    // ── Barycenter refinement: iterate a few times to let nodes shift toward
+    //    the angular center of all their neighbors (not just the BFS parent).
+    //    Helps connected pairs on the same ring end up in adjacent slots.
+    const BARYCENTER_ITERATIONS = 3;
+    for (let iter = 0; iter < BARYCENTER_ITERATIONS; iter++) {
+      // Process rings outward (deeper rings depend on shallower placements)
+      for (const hop of ringIndices) {
+        if (hop === 0) continue;
+        const group = ringGroups.get(hop)!;
+        const ringR = hop * RADIUS_STEP;
+        if (group.length === 0) continue;
+        const idealSlotCount = Math.ceil((2 * Math.PI * ringR) / LINK_DISTANCE);
+        const slotCount = RING_SLOT_PRESETS.find((p) => p >= Math.max(idealSlotCount, group.length)) ?? RING_SLOT_PRESETS[RING_SLOT_PRESETS.length - 1];
+        const slotAngles: number[] = [];
+        for (let i = 0; i < slotCount; i++) {
+          slotAngles.push((i / slotCount) * 2 * Math.PI - Math.PI);
+        }
+        // Compute new preferred angle (circular mean of all placed neighbors)
+        const newPrefs = group.map((n) => {
+          const ns = neighbors.get(n.norm);
+          const placedAngles: number[] = [];
+          if (ns) {
+            for (const nb of ns) {
+              const p = snappedById.get(nb);
+              if (p) placedAngles.push(Math.atan2(p.y, p.x));
+            }
+          }
+          let sx = 0, sy = 0;
+          for (const a of placedAngles) { sx += Math.cos(a); sy += Math.sin(a); }
+          const angle = placedAngles.length > 0 ? Math.atan2(sy, sx) : 0;
+          return { node: n, prefAngle: angle };
+        });
+        // Re-assign slots greedily. Sort by (norm) for determinism.
+        newPrefs.sort((a, b) => a.node.norm.localeCompare(b.node.norm));
+        const takenSlots = new Set<number>();
+        for (const wa of newPrefs) {
+          let bestSlot = -1;
+          let bestDist = Infinity;
+          for (let i = 0; i < slotCount; i++) {
+            if (takenSlots.has(i)) continue;
+            let d = Math.abs(wa.prefAngle - slotAngles[i]);
+            if (d > Math.PI) d = 2 * Math.PI - d;
+            if (d < bestDist) { bestDist = d; bestSlot = i; }
+          }
+          if (bestSlot < 0) continue;
+          takenSlots.add(bestSlot);
+          const a = slotAngles[bestSlot];
+          snappedById.set(wa.node.norm, {
+            x: Math.cos(a) * ringR,
+            y: Math.sin(a) * ringR,
+          });
+        }
+      }
+    }
+
+    // 5) Save snapped positions
+    const newPositions = new Map<string, { x: number; y: number }>();
+    for (const n of worldNodes) {
+      const snapped = snappedById.get(n.norm);
+      if (snapped) {
+        n.x = snapped.x;
+        n.y = snapped.y;
+        n.fx = snapped.x;
+        n.fy = snapped.y;
+        newPositions.set(n.norm, snapped);
+      } else if (typeof n.x === "number" && typeof n.y === "number") {
+        newPositions.set(n.norm, { x: n.x, y: n.y });
+        n.fx = n.x;
+        n.fy = n.y;
+      }
+    }
+    worldPositionsRef.current = newPositions;
+    simNodesRef.current = worldNodes;
+    simLinksRef.current = worldLinks;
+    simRef.current = sim;
+
+    setTick((t) => (t + 1) % 1000000);
+
+    return () => {
+      sim.stop();
+    };
+  }, [synapses]);
+
+
+  // Measure viewport
+  useLayoutEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const read = () => {
+      const r = el.getBoundingClientRect();
+      setViewport({ w: r.width, h: r.height });
+    };
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Camera tween: when focus changes (or viewport resizes), animate pan + zoom
+  // to fit the bounding box of the currently-visible N=2 nodes, with the focused
+  // node ending up at the viewport center.
+  useEffect(() => {
+    if (viewport.w === 0 || viewport.h === 0) return;
+    const worldPos = worldPositionsRef.current;
+    if (worldPos.size === 0) return;
+
+    // Compute bbox of the *immediate* (N=1) neighborhood — focus + direct
+    // neighbors only. With all-nodes visibility, fitting to N=2 zooms out too
+    // much; the user wants to see the focused area comfortably.
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const hx = CARD_W / 2;
+    const hy = CARD_H / 2;
+    let hubPos: { x: number; y: number } | null = null;
+    for (const n of builtNodes) {
+      // hop=1 = direct neighbor of focus; isHub = focus itself
+      if (!n.isHub && n.hop !== 1) continue;
+      const p = worldPos.get(n.norm);
+      if (!p) continue;
+      if (n.isHub) hubPos = p;
+      if (p.x - hx < minX) minX = p.x - hx;
+      if (p.y - hy < minY) minY = p.y - hy;
+      if (p.x + hx > maxX) maxX = p.x + hx;
+      if (p.y + hy > maxY) maxY = p.y + hy;
+    }
+    if (!isFinite(minX) || !hubPos) return;
+
+    const bboxW = Math.max(1, maxX - minX);
+    const bboxH = Math.max(1, maxY - minY);
+    const PAD = 60;
+    const zX = (viewport.w - PAD * 2) / bboxW;
+    const zY = (viewport.h - PAD * 2) / bboxH;
+    // +10% over the natural fit, per user request.
+    const targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(zX, zY) * 1.1));
+    // Pan target so that the focused node ends up at viewport center.
+    //   screen = center + pan + zoom * world
+    //   center == center + pan + zoom * hub  →  pan = -zoom * hub
+    const targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
+
+    const startPan = panRef.current;
+    const startZoom = zoomRef.current;
+    const duration = 320;
+    const t0 = performance.now();
+    function ease(t: number): number {
+      return 1 - Math.pow(1 - t, 3);
+    }
+    let cancelled = false;
+    function step(now: number) {
+      if (cancelled) return;
+      const k = Math.min(1, (now - t0) / duration);
+      const e = ease(k);
+      setPan({
+        x: startPan.x + (targetPan.x - startPan.x) * e,
+        y: startPan.y + (targetPan.y - startPan.y) * e,
+      });
+      setZoom(startZoom + (targetZoom - startZoom) * e);
+      if (k < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+    return () => { cancelled = true; };
+    // worldPositionsRef.current changes are paired with simNodesRef updates which
+    // also bump setTick; we depend on builtNodes (changes per focus) and viewport.
+  }, [focusUrl, builtNodes, viewport.w, viewport.h]);
+
+  // ── Pan / Zoom interactions ─────────────────────────────────────────────────
+  const wheelTimerRef = useRef<number | null>(null);
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const el = viewportRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const z0 = zoomRef.current;
+    const p0 = panRef.current;
+    const factor = Math.exp(-e.deltaY * 0.0015);
+    const z1 = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z0 * factor));
+    // Keep the world point under the cursor fixed:
+    //   screen = pan + zoom * world + center
+    // Solve world = (screen - pan - center)/zoom
+    const cxw = rect.width / 2;
+    const cyw = rect.height / 2;
+    const worldX = (cx - p0.x - cxw) / z0;
+    const worldY = (cy - p0.y - cyw) / z0;
+    const newPanX = cx - cxw - worldX * z1;
+    const newPanY = cy - cyw - worldY * z1;
+    setZoom(z1);
+    setPan({ x: newPanX, y: newPanY });
+    if (wheelTimerRef.current) window.clearTimeout(wheelTimerRef.current);
+  }, []);
+
+  // Background drag (pan)
+  const bgDragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
+  const onBgPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    bgDragRef.current = { startX: e.clientX, startY: e.clientY, panX: panRef.current.x, panY: panRef.current.y };
+    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+  }, []);
+  const onBgPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const d = bgDragRef.current;
+    if (!d) return;
+    setPan({ x: d.panX + (e.clientX - d.startX), y: d.panY + (e.clientY - d.startY) });
+  }, []);
+  const onBgPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const bg = bgDragRef.current;
+    bgDragRef.current = null;
+    try { (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); } catch { /* noop */ }
+    // Click detection: if a card recorded a pointerdown AND the pointer moved
+    // < 5px since then, treat as click on that card. (Pointer capture redirects
+    // pointerup to the canvas, so click detection has to live here.)
+    const d = nodeDragRef.current;
+    nodeDragRef.current = null;
+    if (!d) return;
+    const moved = bg ? Math.hypot(e.clientX - bg.startX, e.clientY - bg.startY) > 5 : false;
+    if (moved) return; // canvas pan happened — not a click
+    if (!d.isHub) {
+      onFocusUrl(d.url);
+      window.setTimeout(() => {
+        setDetailUrl(d.url);
+        setDetailOpen(true);
+      }, 180);
+    } else {
+      setDetailUrl(d.url);
+      setDetailOpen(true);
+    }
+  }, [onFocusUrl]);
+
+  // Node drag — handles single-click vs drag distinction
+  type NodeDrag = {
+    norm: string;
+    url: string;
+    isHub: boolean;
+    startX: number; startY: number;
+    moved: boolean;
+    pointerId: number;
+    // pre-drag fixed state to restore on release
+    hadFx: boolean;
+  };
+  const nodeDragRef = useRef<NodeDrag | null>(null);
+
+  const onNodePointerDown = useCallback((norm: string, url: string, isHub: boolean) =>
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      // No stopPropagation / no setPointerCapture: the canvas's pan handler
+      // also receives the event so the user can pan by dragging anywhere
+      // including over cards. Movement > threshold cancels the click.
+      nodeDragRef.current = {
+        norm, url, isHub,
+        startX: e.clientX, startY: e.clientY,
+        moved: false,
+        pointerId: e.pointerId,
+        hadFx: false,
+      };
+    },
+  []);
+
+  const onNodePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const d = nodeDragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    // Track movement but DO NOT drag the node. The canvas handles panning.
+    if (!d.moved && Math.hypot(dx, dy) > 5) {
+      d.moved = true;
+    }
+  }, []);
+
+  const onNodePointerUp = useCallback(() => {
+    const d = nodeDragRef.current;
+    if (!d) return;
+    nodeDragRef.current = null;
+    if (d.moved) return; // canvas handled the pan — no click
+    // Click — open detail + refocus camera. No layout change.
+    if (!d.isHub) {
+      onFocusUrl(d.url);
+      // Delay popup so the user *sees* the camera glide to the clicked card.
+      window.setTimeout(() => {
+        setDetailUrl(d.url);
+        setDetailOpen(true);
+      }, 180);
+    } else {
+      setDetailUrl(d.url);
+      setDetailOpen(true);
+    }
+  }, [onFocusUrl]);
+
+  // ── Detail panel state ───────────────────────────────────────────────────
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailUrl, setDetailUrl] = useState<string>(focusUrl);
+  useEffect(() => {
+    if (!detailOpen) setDetailUrl(focusUrl);
+  }, [focusUrl, detailOpen]);
+
+  // Keyword note modal
+  const [keywordNote, setKeywordNote] = useState<{
+    keyword: string;
+    description: string;
+    sourceUrl: string;
+    targetUrl: string;
+    synapse?: SynapseRow;
+    /** All synapses for this directed pair (sorted by likes desc). */
+    synapses?: SynapseRow[];
+    /** Index in `synapses` of the currently shown one. */
+    currentIndex?: number;
+  } | null>(null);
+
+  // ── Detail OGP fetch for the currently-detailed URL ─────────────────────
+  const [detailOgp, setDetailOgp] = useState<{ title: string | null; imageUrl: string | null; description: string | null; siteName: string | null } | null>(null);
+  const [detailOgpLoading, setDetailOgpLoading] = useState(false);
+  const [detailImgError, setDetailImgError] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
+  useEffect(() => {
+    if (!detailOpen) return;
+    let cancelled = false;
+    setDescExpanded(false);
+    setDetailImgError(false);
+    setDetailOgpLoading(true);
+    const cached = ogpMiniCache.get(detailUrl);
+    if (cached?.title || cached?.imageUrl) {
+      setDetailOgp({ title: cached.title, imageUrl: cached.imageUrl, description: null, siteName: null });
+    }
+    async function load(refresh: boolean) {
+      const qs = new URLSearchParams({ url: detailUrl });
+      if (refresh) qs.set("refresh", "1");
+      const r = await fetch(`/api/ogp?${qs}`, { cache: "no-store" });
+      const data = (await r.json()) as { error?: string; title?: string | null; imageUrl?: string | null; description?: string | null; siteName?: string | null };
+      if (cancelled) return;
+      if (data.error) { setDetailOgp(null); return; }
+      setDetailOgp({ title: data.title ?? null, imageUrl: data.imageUrl ?? null, description: data.description ?? null, siteName: data.siteName ?? null });
+      const label = resolveContentDisplayTitle(data.title ?? null, detailUrl);
+      if (!refresh && (isWeakContentTitleLabel(label, detailUrl) || !(data.imageUrl ?? "").trim())) {
+        await load(true);
+      }
+    }
+    void load(false).catch(() => { if (!cancelled) setDetailOgp(null); })
+      .finally(() => { if (!cancelled) setDetailOgpLoading(false); });
+    return () => { cancelled = true; };
+  }, [detailOpen, detailUrl]);
+
+  // ESC closes modals
+  useEffect(() => {
+    if (!detailOpen && !keywordNote) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (keywordNote) setKeywordNote(null);
+      else setDetailOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [detailOpen, keywordNote]);
+
+  // Access token for like button
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  useEffect(() => {
+    const supabase = createBrowserClient();
+    void supabase.auth.getSession().then(({ data }) => setAccessToken(data.session?.access_token ?? null));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      setAccessToken(session?.access_token ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Synapses for the detail panel (incoming + outgoing for detailUrl)
+  const detailFocusNorm = useMemo(() => normalizeSynapseEndpoint(detailUrl), [detailUrl]);
+  const outgoingSynapses = useMemo(() =>
+    synapses.filter((s) => normalizeSynapseEndpoint(s.source_url) === detailFocusNorm)
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  [synapses, detailFocusNorm]);
+  const incomingSynapses = useMemo(() =>
+    synapses.filter((s) => normalizeSynapseEndpoint(s.target_url) === detailFocusNorm)
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  [synapses, detailFocusNorm]);
+
+  const detailDisplayTitle = resolveContentDisplayTitle(detailOgp?.title ?? null, detailUrl);
+
+  // ── Render ──────────────────────────────────────────────────────────────
+  const centerX = viewport.w / 2;
+  const centerY = viewport.h / 2;
+
+  // Render ALL nodes in the world map (not just N=2). Off-screen cards are
+  // culled by checking their projected screen position against the viewport
+  // bounds + a generous margin. The current focus is marked as the "hub" for
+  // visual emphasis (ring outline).
+  const simByNorm = new Map<string, GraphNode>();
+  for (const n of simNodesRef.current) simByNorm.set(n.norm, n);
+
+  const focusNormForRender = normalizeSynapseEndpoint(focusUrl);
+  type RenderNode = GraphNode & { x: number; y: number };
+  const nodes: RenderNode[] = [];
+  const nodePosByNorm = new Map<string, { x: number; y: number }>();
+
+  // Off-screen culling: card screen position = center + pan + zoom * world.
+  // Skip cards whose center is outside viewport by more than CULL_MARGIN px.
+  const CULL_MARGIN = (CARD_W * zoom) / 2 + 220;
+
+  for (const wn of simNodesRef.current) {
+    const live = simByNorm.get(wn.norm);
+    const wp = worldPositionsRef.current.get(wn.norm);
+    const x = (typeof live?.x === "number" ? live.x : wp?.x);
+    const y = (typeof live?.y === "number" ? live.y : wp?.y);
+    if (typeof x !== "number" || typeof y !== "number") continue;
+    // Off-screen cull
+    const sx = centerX + pan.x + x * zoom;
+    const sy = centerY + pan.y + y * zoom;
+    if (sx < -CULL_MARGIN || sx > viewport.w + CULL_MARGIN || sy < -CULL_MARGIN || sy > viewport.h + CULL_MARGIN) {
+      continue;
+    }
+    const isFocus = wn.norm === focusNormForRender;
+    nodes.push({ ...wn, isHub: isFocus, x, y });
+    nodePosByNorm.set(wn.norm, { x, y });
+  }
+
+  // Pole-label opacity fades out when zoomed in
+  const poleOpacity = Math.max(0, Math.min(0.5, (1.4 - zoom) * 0.5));
+
+  return (
+    <>
+      <div
+        ref={viewportRef}
+        className="relative h-full w-full overflow-hidden"
+        onWheel={onWheel}
+        onPointerDown={onBgPointerDown}
+        onPointerMove={onBgPointerMove}
+        onPointerUp={onBgPointerUp}
+        onPointerCancel={onBgPointerUp}
+        style={{ cursor: bgDragRef.current ? "grabbing" : "grab", touchAction: "none" }}
+      >
+        {/* Content layer — single transform handles pan + zoom for cards + svg */}
+        <div
+          style={{
+            position: "absolute",
+            left: centerX,
+            top: centerY,
+            width: 0,
+            height: 0,
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: "0 0",
+            pointerEvents: "none",
+          }}
+        >
+          {/* SVG edges — covers a big virtual area */}
+          <svg
+            width={4000}
+            height={4000}
+            viewBox="-2000 -2000 4000 4000"
+            style={{ position: "absolute", left: -2000, top: -2000, overflow: "visible", pointerEvents: "none" }}
+          >
+            <defs>
+              {(Object.keys(DIM_MARKER) as DominantDim[]).map((d) => (
+                <marker
+                  key={d}
+                  id={`arrow-${d}`}
+                  markerWidth={10}
+                  markerHeight={8}
+                  refX={10}
+                  refY={4}
+                  orient="auto"
+                  markerUnits="userSpaceOnUse"
+                >
+                  <path d="M0,0 L10,4 L0,8 Z" fill={DIM_MARKER[d]} />
+                </marker>
+              ))}
+            </defs>
+            {(() => {
+              // Pre-compute card AABBs to test labels against. Card half-sizes have a small
+              // padding so labels don't sit right against the card edge either.
+              const CARD_PAD = 6;
+              const cardRects = nodes
+                .map((n) => (typeof n.x === "number" && typeof n.y === "number"
+                  ? { norm: n.norm, cx: n.x, cy: n.y, hw: CARD_W / 2 + CARD_PAD, hh: CARD_H / 2 + CARD_PAD }
+                  : null))
+                .filter((r): r is { norm: string; cx: number; cy: number; hw: number; hh: number } => r != null);
+              // Already-placed labels — avoid stacking on top of each other.
+              const LABEL_HW = 70; // label is ~140 wide
+              const LABEL_HH = 22; // label is ~44 tall (2 lines)
+              const placedLabels: Array<{ x: number; y: number }> = [];
+              const overlapsAny = (lx: number, ly: number) => {
+                for (const c of cardRects) {
+                  if (Math.abs(lx - c.cx) < c.hw + LABEL_HW && Math.abs(ly - c.cy) < c.hh + LABEL_HH) return true;
+                }
+                for (const p of placedLabels) {
+                  if (Math.abs(lx - p.x) < LABEL_HW * 2 - 8 && Math.abs(ly - p.y) < LABEL_HH * 2 - 4) return true;
+                }
+                return false;
+              };
+
+              return simLinksRef.current.map((l, i) => {
+                const sNorm = typeof l.source === "string" ? l.source : l.source.norm;
+                const tNorm = typeof l.target === "string" ? l.target : l.target.norm;
+                // Render the line if AT LEAST ONE endpoint is in the visible
+                // (post-cull) set. The other endpoint's world position is read
+                // from worldPositionsRef so the line can extend off-screen toward
+                // the culled neighbor — this prevents distant nodes from looking
+                // disconnected when only their immediate region is in view.
+                const sInView = nodePosByNorm.has(sNorm);
+                const tInView = nodePosByNorm.has(tNorm);
+                if (!sInView && !tInView) return null;
+                const sPos = sInView ? nodePosByNorm.get(sNorm) : worldPositionsRef.current.get(sNorm);
+                const tPos = tInView ? nodePosByNorm.get(tNorm) : worldPositionsRef.current.get(tNorm);
+                if (!sPos || !tPos) return null;
+                // Shorten line so arrow tip sits on target card edge
+                const halfW = CARD_W / 2;
+                const halfH = CARD_H / 2;
+                const tipPt = rayRectIntersection(sPos.x, sPos.y, tPos.x, tPos.y, halfW, halfH);
+                const srcEdge = rayRectIntersection(tipPt.x, tipPt.y, sPos.x, sPos.y, halfW, halfH);
+                const dx = tipPt.x - srcEdge.x;
+                const dy = tipPt.y - srcEdge.y;
+                const len = Math.hypot(dx, dy);
+                if (len < 1) return null;
+                // Arrow marker is 10 wide; pull line endpoint back so line ends just before arrow base
+                // while marker's tip (refX=10) lands on the target card edge.
+                const ARROW_LEN = 10;
+                const ux = dx / len;
+                const uy = dy / len;
+                const lineEndX = tipPt.x - ux * ARROW_LEN;
+                const lineEndY = tipPt.y - uy * ARROW_LEN;
+                const baseMidX = (srcEdge.x + lineEndX) / 2;
+                const baseMidY = (srcEdge.y + lineEndY) / 2;
+
+                // Label position: midpoint along the line, with collision avoidance
+                // (perpendicular and along-the-line offsets searched in sequence).
+                let labelX = baseMidX;
+                let labelY = baseMidY;
+                if (l.keyword) {
+                  const perpX = -uy;
+                  const perpY = ux;
+                  const tryOffsets: Array<[number, number]> = [];
+                  tryOffsets.push([0, 0]);
+                  for (const d of [28, 56, 84, 112]) {
+                    tryOffsets.push([perpX * d, perpY * d]);
+                    tryOffsets.push([-perpX * d, -perpY * d]);
+                  }
+                  for (const along of [40, -40, 80, -80]) {
+                    for (const dPerp of [28, -28, 56, -56]) {
+                      tryOffsets.push([ux * along + perpX * dPerp, uy * along + perpY * dPerp]);
+                    }
+                  }
+                  let bestX = baseMidX;
+                  let bestY = baseMidY;
+                  let placed = false;
+                  for (const [ox, oy] of tryOffsets) {
+                    const cx = baseMidX + ox;
+                    const cy = baseMidY + oy;
+                    if (!overlapsAny(cx, cy)) {
+                      bestX = cx;
+                      bestY = cy;
+                      placed = true;
+                      break;
+                    }
+                  }
+                  if (!placed) {
+                    bestX = baseMidX + perpX * 140;
+                    bestY = baseMidY + perpY * 140;
+                  }
+                  labelX = bestX;
+                  labelY = bestY;
+                  placedLabels.push({ x: labelX, y: labelY });
+                }
+
+                const stroke = DIM_STROKE[l.dominant];
+                // Line thickness scales with synapse count for this pair.
+                const synCount = l.synapses.length;
+                const lineWidth = Math.min(5, 1.6 + Math.log2(synCount) * 1.4);
+                return (
+                  <g key={i}>
+                    <line
+                      x1={srcEdge.x}
+                      y1={srcEdge.y}
+                      x2={lineEndX}
+                      y2={lineEndY}
+                      stroke={stroke}
+                      strokeWidth={lineWidth}
+                      strokeLinecap="butt"
+                    />
+                    {/* Tiny invisible segment carries the arrow marker so its tip lands on the card edge */}
+                    <line
+                      x1={lineEndX}
+                      y1={lineEndY}
+                      x2={tipPt.x}
+                      y2={tipPt.y}
+                      stroke="transparent"
+                      strokeWidth={0.1}
+                      markerEnd={`url(#arrow-${l.dominant})`}
+                    />
+                    {l.keyword ? (
+                      <EdgeLabel
+                        midX={labelX}
+                        midY={labelY}
+                        keyword={l.keyword}
+                        stackedKeywords={l.stackedKeywords}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setKeywordNote({
+                            keyword: l.keyword!,
+                            description: l.synapse.description,
+                            sourceUrl: l.synapse.source_url,
+                            targetUrl: l.synapse.target_url,
+                            synapse: l.synapse,
+                            synapses: l.synapses,
+                            currentIndex: 0,
+                          });
+                        }}
+                      />
+                    ) : null}
+                  </g>
+                );
+              });
+            })()}
+          </svg>
+
+          {/* Cards */}
+          {nodes.map((n) => {
+            if (typeof n.x !== "number" || typeof n.y !== "number") return null;
+            return (
+              <div
+                key={n.norm}
+                style={{
+                  position: "absolute",
+                  left: n.x,
+                  top: n.y,
+                  transform: "translate(-50%, -50%)",
+                  pointerEvents: "auto",
+                  zIndex: n.isHub ? 20 : 10,
+                }}
+                onPointerMove={onNodePointerMove}
+                onPointerUp={onNodePointerUp}
+                onPointerCancel={onNodePointerUp}
+              >
+                <GraphCard
+                  url={n.url}
+                  isFocus={n.isHub}
+                  onPointerDown={onNodePointerDown(n.norm, n.url, n.isHub)}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Zoom controls */}
+        <div className="pointer-events-auto absolute right-5 top-5 z-50 flex flex-col items-stretch overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              const z1 = Math.min(ZOOM_MAX, zoomRef.current * 1.2);
+              setZoom(z1);
+            }}
+            disabled={zoom >= ZOOM_MAX - 0.001}
+            className="flex h-11 w-11 items-center justify-center text-zinc-700 transition hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+            title="ズームイン"
+            aria-label="ズームイン"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+              <path d="M11 8v6M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <path d="M16 16l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+          <div className="h-px bg-zinc-200" aria-hidden />
+          <button
+            type="button"
+            onClick={() => {
+              const z1 = Math.max(ZOOM_MIN, zoomRef.current / 1.2);
+              setZoom(z1);
+            }}
+            disabled={zoom <= ZOOM_MIN + 0.001}
+            className="flex h-11 w-11 items-center justify-center text-zinc-700 transition hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+            title="ズームアウト"
+            aria-label="ズームアウト"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+              <path d="M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <path d="M16 16l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+          <div className="h-px bg-zinc-200" aria-hidden />
+          {/* Zoom % display (also clickable to reset zoom to 1) */}
+          <button
+            type="button"
+            onClick={() => setZoom(1)}
+            className="flex h-8 w-11 items-center justify-center text-[11px] font-semibold tabular-nums text-zinc-500 transition hover:bg-indigo-50 hover:text-indigo-700"
+            title="ズーム100%にリセット"
+            aria-label="ズーム100%にリセット"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <div className="h-px bg-zinc-200" aria-hidden />
+          {/* Fit-to-content: compute bbox of currently-visible (N=2) nodes and fit camera */}
+          <button
+            type="button"
+            onClick={() => {
+              const worldPos = worldPositionsRef.current;
+              if (worldPos.size === 0) return;
+              let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+              const hx = CARD_W / 2;
+              const hy = CARD_H / 2;
+              for (const bn of builtNodes) {
+                const p = worldPos.get(bn.norm);
+                if (!p) continue;
+                if (p.x - hx < minX) minX = p.x - hx;
+                if (p.y - hy < minY) minY = p.y - hy;
+                if (p.x + hx > maxX) maxX = p.x + hx;
+                if (p.y + hy > maxY) maxY = p.y + hy;
+              }
+              if (!isFinite(minX)) return;
+              const bboxW = maxX - minX;
+              const bboxH = maxY - minY;
+              const cx = (minX + maxX) / 2;
+              const cy = (minY + maxY) / 2;
+              const PAD = 60;
+              const vp = viewportRef.current?.getBoundingClientRect();
+              if (!vp) return;
+              const zX = (vp.width - PAD * 2) / Math.max(1, bboxW);
+              const zY = (vp.height - PAD * 2) / Math.max(1, bboxH);
+              const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(zX, zY)));
+              setZoom(z);
+              setPan({ x: -cx * z, y: -cy * z });
+            }}
+            className="flex h-11 w-11 items-center justify-center text-zinc-700 transition hover:bg-indigo-50 hover:text-indigo-700"
+            title="全体にフィット"
+            aria-label="全体にフィット"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path d="M3 8V3h5M21 8V3h-5M3 16v5h5M21 16v5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Detail modal */}
+      <AnimatePresence>
+        {detailOpen ? (
+          <motion.div key="focus-detail-overlay" className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+            <button type="button" aria-label="閉じる" className="absolute inset-0 bg-zinc-900/45 backdrop-blur-[2px]" onClick={() => setDetailOpen(false)} />
+            <motion.div
+              role="dialog" aria-modal="true" aria-labelledby="focus-detail-title"
+              className="relative z-10 flex max-h-[min(90vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.18)]"
+              initial={{ opacity: 0, scale: 0.96, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              transition={{ type: "spring", stiffness: 420, damping: 32 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-100 px-4 py-3 sm:px-5">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">フォーカス</span>
+                <button type="button" onClick={() => setDetailOpen(false)} className="rounded-lg px-2 py-1 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900">閉じる</button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {detailOgp?.imageUrl && !detailImgError ? (
+                  <OgpTileMedia pageUrl={detailUrl} imageUrl={detailOgp.imageUrl} slot="modal" loading={false} eager onError={() => setDetailImgError(true)} />
+                ) : null}
+                <div className="space-y-4 px-4 py-4 sm:px-5 sm:py-5">
+                  <h2 id="focus-detail-title" className="text-base font-semibold leading-snug text-zinc-900 sm:text-lg">
+                    {detailOgpLoading ? "読み込み中…" : detailDisplayTitle}
+                  </h2>
+                  {(() => {
+                    const platform = detectContentPlatform(detailUrl);
+                    // CI カラーを反映した「(メディア名)で作品をみる」ボタン。
+                    const PLATFORM_BTN: Record<string, { name: string; cls: string }> = {
+                      amazon:   { name: "Amazon",      cls: "bg-[#FF9900] text-white hover:brightness-95" },
+                      youtube:  { name: "YouTube",     cls: "bg-[#FF0000] text-white hover:brightness-95" },
+                      netflix:  { name: "Netflix",     cls: "bg-black text-[#E50914] hover:bg-zinc-900" },
+                      disney:   { name: "Disney+",     cls: "bg-[#0063E5] text-white hover:brightness-95" },
+                      prime:    { name: "Prime Video", cls: "bg-[#00A8E1] text-white hover:brightness-95" },
+                      wikipedia:{ name: "Wikipedia",   cls: "bg-zinc-800 text-white hover:bg-zinc-700" },
+                    };
+                    const meta = PLATFORM_BTN[platform];
+                    const label = meta ? `${meta.name}で作品をみる` : "ページを開く";
+                    const cls = meta ? meta.cls : "bg-indigo-600 text-white hover:bg-indigo-500";
+                    return (
+                      <a
+                        href={withAmazonAffiliate(detailUrl)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`inline-flex w-fit items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition ${cls}`}
+                      >
+                        {label} <span aria-hidden>↗</span>
+                      </a>
+                    );
+                  })()}
+                  <section className="rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2.5 sm:px-3.5 sm:py-3">
+                    <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">概要</h3>
+                    {detailOgp?.description?.trim() ? (
+                      <>
+                        <div className={["relative overflow-hidden", descExpanded ? "" : "max-h-[5.5em]"].join(" ")}>
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{detailOgp.description.trim()}</p>
+                          {!descExpanded ? (
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-zinc-50/95 to-transparent" />
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setDescExpanded((v) => !v)}
+                          className="mt-1.5 text-[11px] font-semibold text-indigo-600 transition hover:text-indigo-700"
+                        >
+                          {descExpanded ? "閉じる" : "もっと読む"}
+                        </button>
+                      </>
+                    ) : (
+                      <p className="text-sm leading-relaxed text-zinc-500">概要テキストを取得できませんでした。</p>
+                    )}
+                  </section>
+                  {outgoingSynapses.length + incomingSynapses.length > 0 ? (
+                    <section className="rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2.5 sm:px-3.5 sm:py-3">
+                      <ul className="space-y-3">
+                        {outgoingSynapses.length > 0 ? (
+                          <>
+                            <li className="text-[10px] font-semibold tracking-[0.05em] text-indigo-500">関連シナプス：出発</li>
+                            {outgoingSynapses.map((s) => (
+                              <RelatedSynapseRow key={s.id} synapse={s} direction="outgoing" focusNorm={detailFocusNorm} accessToken={accessToken} />
+                            ))}
+                          </>
+                        ) : null}
+                        {incomingSynapses.length > 0 ? (
+                          <>
+                            <li className={["text-[10px] font-semibold tracking-[0.05em] text-zinc-500", outgoingSynapses.length > 0 ? "mt-4 pt-3 border-t border-zinc-200/70" : ""].join(" ")}>関連シナプス：着地</li>
+                            {incomingSynapses.map((s) => (
+                              <RelatedSynapseRow key={s.id} synapse={s} direction="incoming" focusNorm={detailFocusNorm} accessToken={accessToken} />
+                            ))}
+                          </>
+                        ) : null}
+                      </ul>
+                    </section>
+                  ) : null}
+                  <p className="break-all text-[11px] leading-snug text-zinc-500">{detailUrl}</p>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      {/* Keyword note modal */}
+      <AnimatePresence>
+        {keywordNote ? (
+          <motion.div key="keyword-note-overlay" className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+            <button type="button" aria-label="閉じる" className="absolute inset-0 bg-zinc-900/40 backdrop-blur-[2px]" onClick={() => setKeywordNote(null)} />
+            <motion.div
+              role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-body"
+              className="relative z-10 flex max-h-[min(85vh,620px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.18)]"
+              initial={{ opacity: 0, scale: 0.96, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              transition={{ type: "spring", stiffness: 420, damping: 34 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-center justify-end gap-2 border-b border-zinc-100 px-4 py-3 sm:px-5">
+                <span id="keyword-note-title" className="sr-only">シナプス詳細</span>
+                <button type="button" onClick={() => setKeywordNote(null)} className="rounded-lg px-2 py-1 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900">閉じる</button>
+              </div>
+              <KeywordModalWorksLine
+                sourceUrl={keywordNote.sourceUrl}
+                targetUrl={keywordNote.targetUrl}
+                focusUrl={focusUrl}
+                onClickWork={(url) => {
+                  // Close the keyword modal, refocus on the clicked work,
+                  // and open its detail panel (matches the main-canvas click flow).
+                  setKeywordNote(null);
+                  onFocusUrl(url);
+                  window.setTimeout(() => {
+                    setDetailUrl(url);
+                    setDetailOpen(true);
+                  }, 180);
+                }}
+              />
+              <div id="keyword-note-body" className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
+                <h2 className="text-sm font-semibold leading-snug text-indigo-900 sm:text-base">「{keywordNote.keyword}」</h2>
+                <div className="rounded-xl border border-zinc-100 bg-zinc-50/90 px-3 py-3 sm:px-3.5 sm:py-3.5">
+                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-500">接続理由</p>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">{keywordNote.description.trim() || "（本文なし）"}</p>
+                </div>
+                {keywordNote.synapse ? (
+                  <div className="flex items-center justify-between gap-2">
+                    {keywordNote.synapse.user_id ? (
+                      <PosterLink userId={keywordNote.synapse.user_id} />
+                    ) : <span />}
+                    <LikeButton synapse={keywordNote.synapse} accessToken={accessToken} />
+                  </div>
+                ) : null}
+                {/* Multi-synapse navigation: when this pair has >1 synapse, show
+                    prev/next + index indicator. */}
+                {keywordNote.synapses && keywordNote.synapses.length > 1 ? (
+                  <div className="mt-2 flex items-center justify-between gap-2 border-t border-zinc-100 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const arr = keywordNote.synapses!;
+                        const cur = keywordNote.currentIndex ?? 0;
+                        const next = (cur - 1 + arr.length) % arr.length;
+                        const s = arr[next];
+                        setKeywordNote({
+                          ...keywordNote,
+                          synapse: s,
+                          keyword: pickEdgeKeyword(s) ?? keywordNote.keyword,
+                          description: s.description,
+                          currentIndex: next,
+                        });
+                      }}
+                      className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-medium text-zinc-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                    >
+                      ← 前
+                    </button>
+                    <span className="text-[10px] font-medium tabular-nums text-zinc-500">
+                      {(keywordNote.currentIndex ?? 0) + 1} / {keywordNote.synapses.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const arr = keywordNote.synapses!;
+                        const cur = keywordNote.currentIndex ?? 0;
+                        const next = (cur + 1) % arr.length;
+                        const s = arr[next];
+                        setKeywordNote({
+                          ...keywordNote,
+                          synapse: s,
+                          keyword: pickEdgeKeyword(s) ?? keywordNote.keyword,
+                          description: s.description,
+                          currentIndex: next,
+                        });
+                      }}
+                      className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-medium text-zinc-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                    >
+                      次 →
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </>
+  );
+}
+

@@ -54,7 +54,7 @@ export function AuthPanel({ onUser }: Props) {
         <a href={`/user/${user.id}`} title="マイページ">
           <img
             src={user.user_metadata?.avatar_url ?? `https://api.dicebear.com/7.x/initials/svg?seed=${user.email}`}
-            alt={user.user_metadata?.full_name ?? user.email ?? "user"}
+            alt={user.user_metadata?.nickname ?? user.user_metadata?.full_name ?? user.email ?? "user"}
             className="h-7 w-7 rounded-full border border-zinc-200 object-cover transition hover:ring-2 hover:ring-indigo-300"
           />
         </a>

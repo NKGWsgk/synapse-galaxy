@@ -32,7 +32,11 @@ export async function GET() {
     (usersData?.users ?? []).map((u) => [
       u.id,
       {
-        name: (u.user_metadata?.full_name as string | undefined) ?? u.email ?? u.id.slice(0, 8),
+        name:
+          (u.user_metadata?.nickname as string | undefined) ??
+          (u.user_metadata?.full_name as string | undefined) ??
+          u.email ??
+          u.id.slice(0, 8),
         avatar: (u.user_metadata?.avatar_url as string | undefined) ?? null,
       },
     ]),

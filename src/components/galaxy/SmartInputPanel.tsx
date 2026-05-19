@@ -1,6 +1,7 @@
 "use client";
 
 import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import type { User } from "@supabase/supabase-js";
 import { formatWorkDisplayTitle, getOgpImageDisplaySrc } from "@/lib/ogpDisplay";
 import { ogpImageLayout } from "@/lib/ogpImagePresentation";
@@ -115,9 +116,16 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
-  async function submit(e: FormEvent) {
+  function handleSubmitClick(e: FormEvent) {
     e.preventDefault();
+    // Form's native required + this submit handler ensures all fields are filled
+    setMessage(null);
+    setConfirmOpen(true);
+  }
+
+  async function confirmAndSubmit() {
     setLoading(true);
     setMessage(null);
     try {
@@ -133,22 +141,28 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
         body: JSON.stringify({ sourceUrl, targetUrl, title: title.trim(), description }),
       });
       const data = await res.json();
-      if (!res.ok) { setMessage(data.error ?? "保存に失敗しました"); return; }
+      if (!res.ok) {
+        setMessage(data.error ?? "保存に失敗しました");
+        setConfirmOpen(false);
+        return;
+      }
       setMessage("シナプスを繋ぎました！");
       setSourceUrl("");
       setTargetUrl("");
       setTitle("");
       setDescription("");
+      setConfirmOpen(false);
       setTimeout(onCreated, 800);
     } catch {
       setMessage("通信エラー");
+      setConfirmOpen(false);
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <form onSubmit={submit} className="space-y-2">
+    <form onSubmit={handleSubmitClick} className="space-y-2">
       {!user ? (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
           投稿にはGoogleログインが必要です
@@ -226,6 +240,89 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
           {message}
         </p>
       ) : null}
+
+      {/* 確定確認モーダル */}
+      <AnimatePresence>
+        {confirmOpen ? (
+          <motion.div
+            className="fixed inset-0 z-[250] flex items-center justify-center p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <button
+              type="button"
+              aria-label="閉じる"
+              className="absolute inset-0 bg-zinc-900/60 backdrop-blur-sm"
+              onClick={() => !loading && setConfirmOpen(false)}
+            />
+            <motion.div
+              className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.22)]"
+              initial={{ scale: 0.94, y: 16 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.94, y: 16 }}
+              transition={{ type: "spring", stiffness: 420, damping: 34 }}
+            >
+              <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-5 py-3.5">
+                <h3 className="text-sm font-bold text-zinc-900">この内容で繋ぎますか？</h3>
+                <button
+                  type="button"
+                  onClick={() => !loading && setConfirmOpen(false)}
+                  disabled={loading}
+                  className="rounded-lg px-2 py-1 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-50"
+                >
+                  戻る
+                </button>
+              </div>
+
+              <div className="max-h-[60vh] overflow-y-auto px-5 py-4 space-y-3">
+                {/* 警告 */}
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+                  <p className="font-semibold">⚠ 確定後は内容を変更できません</p>
+                </div>
+
+                {/* OGP プレビュー */}
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <OgpPreviewCard url={sourceUrl} label="出発作品" />
+                  <OgpPreviewCard url={targetUrl} label="着地作品" />
+                </div>
+
+                {/* 接続タイトル */}
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">接続タイトル</p>
+                  <p className="mt-1 text-sm font-semibold text-zinc-900">{title.trim() || "（未入力）"}</p>
+                </div>
+
+                {/* 接続理由 */}
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">接続理由</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{description.trim() || "（未入力）"}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-zinc-100 bg-zinc-50/50 px-5 py-3">
+                <button
+                  type="button"
+                  onClick={() => setConfirmOpen(false)}
+                  disabled={loading}
+                  className="rounded-full px-4 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:opacity-50"
+                >
+                  戻って修正
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmAndSubmit}
+                  disabled={loading}
+                  className="rounded-full bg-indigo-600 px-5 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {loading ? "保存中…" : "確定して繋ぐ"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </form>
   );
 }
