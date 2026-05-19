@@ -7,10 +7,17 @@ import * as d3 from "d3-force";
 import { isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
 import { EdgeKeywordInnerText } from "@/components/galaxy/EdgeKeywordInnerText";
 import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
-import { detectContentPlatform } from "@/lib/contentPlatform";
+import {
+  contentPlatformDisplayName,
+  detectContentPlatform,
+  isMusicContentPlatform,
+  type AllowedSynapsePlatform,
+  type ContentPlatformId,
+} from "@/lib/contentPlatform";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
-import { isAmazonUrl, withAmazonAffiliate } from "@/lib/amazon";
+import { isAmazonUrl } from "@/lib/amazon";
+import { withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import {
   LikeButton,
@@ -445,13 +452,14 @@ const EDGE_LABEL_BODY_MIN_PX = 22;
 
 /** 折り返し後の見た目幅・高さに合わせる（nowrap 計測だと複数行で横にゆとりだけ出やすい） */
 const EDGE_LABEL_INNER_WRAP_CLS =
-  "box-border rounded-2xl border border-indigo-100 px-0.5 py-1 text-center text-[10px] font-semibold leading-snug break-keep break-words whitespace-pre-line";
+  "box-border rounded-2xl border border-indigo-100 px-1 py-1 text-center text-[11px] font-semibold leading-snug break-keep break-words whitespace-pre-line shadow-sm";
 
 function EdgeLabel({
-  midX, midY, keyword, stackedKeywords, onClick,
+  midX, midY, keyword, stackedKeywords, zoom, onClick,
 }: {
   midX: number; midY: number; keyword: string;
   stackedKeywords?: string[];
+  zoom: number;
   onClick: (e: React.MouseEvent) => void;
 }) {
   const peeks = stackedKeywords ?? [];
@@ -473,14 +481,23 @@ function EdgeLabel({
   }, [keyword]);
 
   const foH = box.h + extraHeight;
+  /** 親 scale(zoom) の影響を打ち消し、画面上のラベルサイズを一定に保つ（モバイルのズームアウト対策） */
+  const labelScreenScale = 1 / Math.max(zoom, 0.35);
 
   return (
-    <foreignObject
-      x={midX - box.w / 2}
-      y={midY - box.h / 2 - extraHeight}
-      width={box.w}
-      height={foH}
-      style={{ overflow: "visible", pointerEvents: "auto" }}
+    <div
+      data-edge-keyword-label
+      style={{
+        position: "absolute",
+        left: midX,
+        top: midY,
+        width: box.w,
+        height: foH,
+        transform: `translate3d(-50%, -50%, 0) scale(${labelScreenScale})`,
+        WebkitTransform: `translate3d(-50%, -50%, 0) scale(${labelScreenScale})`,
+        pointerEvents: "none",
+        zIndex: 15,
+      }}
     >
       <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "visible" }}>
         <div
@@ -530,7 +547,7 @@ function EdgeLabel({
           <EdgeKeywordInnerText keyword={keyword} />
         </button>
       </div>
-    </foreignObject>
+    </div>
   );
 }
 
@@ -712,6 +729,7 @@ function PosterLink({ userId }: { userId: string }) {
 
 export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const contentLayerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
 
   // Camera state. Initial values are overridden by the focus-tween effect once
@@ -722,6 +740,21 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   const zoomRef = useRef(zoom);
   useEffect(() => { panRef.current = pan; }, [pan]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+  const gesturingRef = useRef(false);
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<{ dist0: number; zoom0: number; pan0: { x: number; y: number } } | null>(null);
+
+  const applyCameraDom = useCallback((p: { x: number; y: number }, z: number) => {
+    panRef.current = p;
+    zoomRef.current = z;
+    const el = contentLayerRef.current;
+    if (el) el.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) scale(${z})`;
+  }, []);
+
+  useEffect(() => {
+    if (!gesturingRef.current) applyCameraDom(pan, zoom);
+  }, [pan, zoom, applyCameraDom]);
 
   /** フォーカス初回Tweenで算出した pan/zoom。ツールバー％はこれを100% とする（実倍率は変更しない）。 */
   const [cameraUIBaseline, setCameraUIBaseline] = useState<{
@@ -742,16 +775,22 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
         if (token !== cameraAnimTokenRef.current) return;
         const k = Math.min(1, (now - t0) / durationMs);
         const e = easeOutCubic(k);
-        setPan({
+        const p = {
           x: startPan.x + (targetPan.x - startPan.x) * e,
           y: startPan.y + (targetPan.y - startPan.y) * e,
-        });
-        setZoom(startZoom + (targetZoom - startZoom) * e);
-        if (k < 1) requestAnimationFrame(step);
+        };
+        const z = startZoom + (targetZoom - startZoom) * e;
+        applyCameraDom(p, z);
+        if (k < 1) {
+          requestAnimationFrame(step);
+        } else {
+          setPan(p);
+          setZoom(z);
+        }
       }
       requestAnimationFrame(step);
     },
-    [],
+    [applyCameraDom],
   );
 
   // Build graph (memoized on focus + synapses identity) — used for VISIBILITY
@@ -1303,47 +1342,146 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     const p0 = panRef.current;
     const factor = Math.exp(-e.deltaY * 0.0015);
     const z1 = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z0 * factor));
-    // Keep the world point under the cursor fixed:
-    //   screen = pan + zoom * world + center
-    // Solve world = (screen - pan - center)/zoom
     const cxw = rect.width / 2;
     const cyw = rect.height / 2;
     const worldX = (cx - p0.x - cxw) / z0;
     const worldY = (cy - p0.y - cyw) / z0;
-    const newPanX = cx - cxw - worldX * z1;
-    const newPanY = cy - cyw - worldY * z1;
+    const newPan = { x: cx - cxw - worldX * z1, y: cy - cyw - worldY * z1 };
+    applyCameraDom(newPan, z1);
+    setPan(newPan);
     setZoom(z1);
-    setPan({ x: newPanX, y: newPanY });
     if (wheelTimerRef.current) window.clearTimeout(wheelTimerRef.current);
+  }, [applyCameraDom]);
+
+  const viewportLocalFromClient = useCallback((clientX: number, clientY: number) => {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return { x: clientX - rect.left, y: clientY - rect.top };
   }, []);
 
-  // Background drag (pan)
+  const pointerDistance = useCallback(() => {
+    const pts = [...pointersRef.current.values()];
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+  }, []);
+
+  const pointerMidClient = useCallback(() => {
+    const pts = [...pointersRef.current.values()];
+    if (pts.length < 2) return null;
+    return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+  }, []);
+
+  // Background drag (pan) + pinch zoom
   const bgDragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
+
+  const commitCameraState = useCallback(() => {
+    gesturingRef.current = false;
+    setPan({ ...panRef.current });
+    setZoom(zoomRef.current);
+  }, []);
+
   const onBgPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     const t = e.target as HTMLElement | null;
-    // 右上ズームツールバーへは伝播しない（viewport が capture すると +/− が効かなくなる）
     if (t?.closest("[data-graph-zoom-toolbar]")) return;
-    bgDragRef.current = { startX: e.clientX, startY: e.clientY, panX: panRef.current.x, panY: panRef.current.y };
-    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-  }, []);
+    if (t?.closest("[data-edge-keyword-label]")) return;
+
+    cameraAnimTokenRef.current += 1;
+    gesturingRef.current = true;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size === 1) {
+      bgDragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        panX: panRef.current.x,
+        panY: panRef.current.y,
+      };
+      pinchRef.current = null;
+      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    } else if (pointersRef.current.size === 2) {
+      bgDragRef.current = null;
+      const dist = pointerDistance();
+      if (dist > 8) {
+        pinchRef.current = {
+          dist0: dist,
+          zoom0: zoomRef.current,
+          pan0: { ...panRef.current },
+        };
+      }
+    }
+  }, [pointerDistance]);
+
   const onBgPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size >= 2) {
+      const pinch = pinchRef.current;
+      const dist = pointerDistance();
+      const midClient = pointerMidClient();
+      if (!pinch || dist < 1 || !midClient || viewport.w <= 0) return;
+      const local = viewportLocalFromClient(midClient.x, midClient.y);
+      const cxw = viewport.w / 2;
+      const cyw = viewport.h / 2;
+      const z1 = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinch.zoom0 * (dist / pinch.dist0)));
+      const worldX = (local.x - pinch.pan0.x - cxw) / pinch.zoom0;
+      const worldY = (local.y - pinch.pan0.y - cyw) / pinch.zoom0;
+      applyCameraDom(
+        { x: local.x - cxw - worldX * z1, y: local.y - cyw - worldY * z1 },
+        z1,
+      );
+      return;
+    }
+
     const d = bgDragRef.current;
     if (!d) return;
-    setPan({ x: d.panX + (e.clientX - d.startX), y: d.panY + (e.clientY - d.startY) });
-  }, []);
+    applyCameraDom(
+      { x: d.panX + (e.clientX - d.startX), y: d.panY + (e.clientY - d.startY) },
+      zoomRef.current,
+    );
+  }, [applyCameraDom, pointerDistance, pointerMidClient, viewportLocalFromClient, viewport.w, viewport.h]);
+
   const onBgPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const bg = bgDragRef.current;
-    bgDragRef.current = null;
+    pointersRef.current.delete(e.pointerId);
     try { (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); } catch { /* noop */ }
-    // Click detection: if a card recorded a pointerdown AND the pointer moved
-    // < 5px since then, treat as click on that card. (Pointer capture redirects
-    // pointerup to the canvas, so click detection has to live here.)
+
+    const bg = bgDragRef.current;
+
+    if (pointersRef.current.size === 1) {
+      pinchRef.current = null;
+      const [remaining] = [...pointersRef.current.values()];
+      bgDragRef.current = {
+        startX: remaining.x,
+        startY: remaining.y,
+        panX: panRef.current.x,
+        panY: panRef.current.y,
+      };
+      return;
+    }
+
+    if (pointersRef.current.size >= 2) {
+      const dist = pointerDistance();
+      if (dist > 8) {
+        pinchRef.current = {
+          dist0: dist,
+          zoom0: zoomRef.current,
+          pan0: { ...panRef.current },
+        };
+      }
+      bgDragRef.current = null;
+      return;
+    }
+
+    bgDragRef.current = null;
+    pinchRef.current = null;
+    commitCameraState();
+
     const d = nodeDragRef.current;
     nodeDragRef.current = null;
     if (!d) return;
     const moved = bg ? Math.hypot(e.clientX - bg.startX, e.clientY - bg.startY) > 5 : false;
-    if (moved) return; // canvas pan happened — not a click
+    if (moved) return;
     if (!d.isHub) {
       onFocusUrl(d.url);
       window.setTimeout(() => {
@@ -1354,7 +1492,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       setDetailUrl(d.url);
       setDetailOpen(true);
     }
-  }, [onFocusUrl]);
+  }, [commitCameraState, onFocusUrl, pointerDistance]);
 
   // Node drag — handles single-click vs drag distinction
   type NodeDrag = {
@@ -1544,6 +1682,124 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   // Pole-label opacity fades out when zoomed in
   const poleOpacity = Math.max(0, Math.min(0.5, (1.4 - zoom) * 0.5));
 
+  // Edge lines (SVG) + keyword labels (HTML — foreignObject は iOS Safari で描画されない)
+  const edgeLineElements: React.ReactNode[] = [];
+  const edgeLabelElements: React.ReactNode[] = [];
+  {
+    const CARD_PAD = 6;
+    const cardRects = nodes
+      .map((n) => ({ norm: n.norm, cx: n.x, cy: n.y, hw: CARD_W / 2 + CARD_PAD, hh: CARD_H / 2 + CARD_PAD }));
+    const LABEL_HW = 70;
+    const LABEL_HH = 22;
+    const placedLabels: Array<{ x: number; y: number }> = [];
+    const overlapsAny = (lx: number, ly: number) => {
+      for (const c of cardRects) {
+        if (Math.abs(lx - c.cx) < c.hw + LABEL_HW && Math.abs(ly - c.cy) < c.hh + LABEL_HH) return true;
+      }
+      for (const p of placedLabels) {
+        if (Math.abs(lx - p.x) < LABEL_HW * 2 - 8 && Math.abs(ly - p.y) < LABEL_HH * 2 - 4) return true;
+      }
+      return false;
+    };
+
+    for (let i = 0; i < simLinksRef.current.length; i++) {
+      const l = simLinksRef.current[i];
+      const sNorm = typeof l.source === "string" ? l.source : l.source.norm;
+      const tNorm = typeof l.target === "string" ? l.target : l.target.norm;
+      const sInView = nodePosByNorm.has(sNorm);
+      const tInView = nodePosByNorm.has(tNorm);
+      if (!sInView && !tInView) continue;
+      const sPos = sInView ? nodePosByNorm.get(sNorm) : worldPositionsRef.current.get(sNorm);
+      const tPos = tInView ? nodePosByNorm.get(tNorm) : worldPositionsRef.current.get(tNorm);
+      if (!sPos || !tPos) continue;
+      const halfW = CARD_W / 2;
+      const halfH = CARD_H / 2;
+      const tipPt = rayRectIntersection(sPos.x, sPos.y, tPos.x, tPos.y, halfW, halfH);
+      const srcEdge = rayRectIntersection(tipPt.x, tipPt.y, sPos.x, sPos.y, halfW, halfH);
+      const dx = tipPt.x - srcEdge.x;
+      const dy = tipPt.y - srcEdge.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) continue;
+      const ARROW_LEN = 10;
+      const ux = dx / len;
+      const uy = dy / len;
+      const lineEndX = tipPt.x - ux * ARROW_LEN;
+      const lineEndY = tipPt.y - uy * ARROW_LEN;
+      const baseMidX = (srcEdge.x + lineEndX) / 2;
+      const baseMidY = (srcEdge.y + lineEndY) / 2;
+
+      let labelX = baseMidX;
+      let labelY = baseMidY;
+      if (l.keyword) {
+        const perpX = -uy;
+        const perpY = ux;
+        const tryOffsets: Array<[number, number]> = [[0, 0]];
+        for (const d of [28, 56, 84, 112]) {
+          tryOffsets.push([perpX * d, perpY * d], [-perpX * d, -perpY * d]);
+        }
+        for (const along of [40, -40, 80, -80]) {
+          for (const dPerp of [28, -28, 56, -56]) {
+            tryOffsets.push([ux * along + perpX * dPerp, uy * along + perpY * dPerp]);
+          }
+        }
+        let bestX = baseMidX;
+        let bestY = baseMidY;
+        let placed = false;
+        for (const [ox, oy] of tryOffsets) {
+          const cx = baseMidX + ox;
+          const cy = baseMidY + oy;
+          if (!overlapsAny(cx, cy)) {
+            bestX = cx;
+            bestY = cy;
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) {
+          bestX = baseMidX + perpX * 140;
+          bestY = baseMidY + perpY * 140;
+        }
+        labelX = bestX;
+        labelY = bestY;
+        placedLabels.push({ x: labelX, y: labelY });
+      }
+
+      const stroke = DIM_STROKE[l.dominant];
+      const synCount = l.synapses.length;
+      const lineWidth = Math.min(5, 1.6 + Math.log2(synCount) * 1.4);
+      edgeLineElements.push(
+        <g key={i}>
+          <line x1={srcEdge.x} y1={srcEdge.y} x2={lineEndX} y2={lineEndY} stroke={stroke} strokeWidth={lineWidth} strokeLinecap="butt" />
+          <line x1={lineEndX} y1={lineEndY} x2={tipPt.x} y2={tipPt.y} stroke="transparent" strokeWidth={0.1} markerEnd={`url(#arrow-${l.dominant})`} />
+        </g>,
+      );
+      if (l.keyword) {
+        edgeLabelElements.push(
+          <EdgeLabel
+            key={`${l.synapse.id}-${l.keyword}`}
+            midX={labelX}
+            midY={labelY}
+            keyword={l.keyword}
+            stackedKeywords={l.stackedKeywords}
+            zoom={zoom}
+            onClick={(e) => {
+              e.stopPropagation();
+              setKeywordNote({
+                keyword: l.keyword!,
+                description: l.synapse.description,
+                sourceUrl: l.synapse.source_url,
+                targetUrl: l.synapse.target_url,
+                synapse: l.synapse,
+                synapses: l.synapses,
+                currentIndex: 0,
+              });
+            }}
+          />,
+        );
+      }
+    }
+  }
+
   return (
     <>
       <div
@@ -1558,13 +1814,14 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       >
         {/* Content layer — single transform handles pan + zoom for cards + svg */}
         <div
+          ref={contentLayerRef}
           style={{
             position: "absolute",
             left: centerX,
             top: centerY,
             width: 0,
             height: 0,
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
             transformOrigin: "0 0",
             pointerEvents: "none",
           }}
@@ -1592,153 +1849,11 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                 </marker>
               ))}
             </defs>
-            {(() => {
-              // Pre-compute card AABBs to test labels against. Card half-sizes have a small
-              // padding so labels don't sit right against the card edge either.
-              const CARD_PAD = 6;
-              const cardRects = nodes
-                .map((n) => (typeof n.x === "number" && typeof n.y === "number"
-                  ? { norm: n.norm, cx: n.x, cy: n.y, hw: CARD_W / 2 + CARD_PAD, hh: CARD_H / 2 + CARD_PAD }
-                  : null))
-                .filter((r): r is { norm: string; cx: number; cy: number; hw: number; hh: number } => r != null);
-              // Already-placed labels — avoid stacking on top of each other.
-              const LABEL_HW = 70; // label is ~140 wide
-              const LABEL_HH = 22; // label is ~44 tall (2 lines)
-              const placedLabels: Array<{ x: number; y: number }> = [];
-              const overlapsAny = (lx: number, ly: number) => {
-                for (const c of cardRects) {
-                  if (Math.abs(lx - c.cx) < c.hw + LABEL_HW && Math.abs(ly - c.cy) < c.hh + LABEL_HH) return true;
-                }
-                for (const p of placedLabels) {
-                  if (Math.abs(lx - p.x) < LABEL_HW * 2 - 8 && Math.abs(ly - p.y) < LABEL_HH * 2 - 4) return true;
-                }
-                return false;
-              };
-
-              return simLinksRef.current.map((l, i) => {
-                const sNorm = typeof l.source === "string" ? l.source : l.source.norm;
-                const tNorm = typeof l.target === "string" ? l.target : l.target.norm;
-                // Render the line if AT LEAST ONE endpoint is in the visible
-                // (post-cull) set. The other endpoint's world position is read
-                // from worldPositionsRef so the line can extend off-screen toward
-                // the culled neighbor — this prevents distant nodes from looking
-                // disconnected when only their immediate region is in view.
-                const sInView = nodePosByNorm.has(sNorm);
-                const tInView = nodePosByNorm.has(tNorm);
-                if (!sInView && !tInView) return null;
-                const sPos = sInView ? nodePosByNorm.get(sNorm) : worldPositionsRef.current.get(sNorm);
-                const tPos = tInView ? nodePosByNorm.get(tNorm) : worldPositionsRef.current.get(tNorm);
-                if (!sPos || !tPos) return null;
-                // Shorten line so arrow tip sits on target card edge
-                const halfW = CARD_W / 2;
-                const halfH = CARD_H / 2;
-                const tipPt = rayRectIntersection(sPos.x, sPos.y, tPos.x, tPos.y, halfW, halfH);
-                const srcEdge = rayRectIntersection(tipPt.x, tipPt.y, sPos.x, sPos.y, halfW, halfH);
-                const dx = tipPt.x - srcEdge.x;
-                const dy = tipPt.y - srcEdge.y;
-                const len = Math.hypot(dx, dy);
-                if (len < 1) return null;
-                // Arrow marker is 10 wide; pull line endpoint back so line ends just before arrow base
-                // while marker's tip (refX=10) lands on the target card edge.
-                const ARROW_LEN = 10;
-                const ux = dx / len;
-                const uy = dy / len;
-                const lineEndX = tipPt.x - ux * ARROW_LEN;
-                const lineEndY = tipPt.y - uy * ARROW_LEN;
-                const baseMidX = (srcEdge.x + lineEndX) / 2;
-                const baseMidY = (srcEdge.y + lineEndY) / 2;
-
-                // Label position: midpoint along the line, with collision avoidance
-                // (perpendicular and along-the-line offsets searched in sequence).
-                let labelX = baseMidX;
-                let labelY = baseMidY;
-                if (l.keyword) {
-                  const perpX = -uy;
-                  const perpY = ux;
-                  const tryOffsets: Array<[number, number]> = [];
-                  tryOffsets.push([0, 0]);
-                  for (const d of [28, 56, 84, 112]) {
-                    tryOffsets.push([perpX * d, perpY * d]);
-                    tryOffsets.push([-perpX * d, -perpY * d]);
-                  }
-                  for (const along of [40, -40, 80, -80]) {
-                    for (const dPerp of [28, -28, 56, -56]) {
-                      tryOffsets.push([ux * along + perpX * dPerp, uy * along + perpY * dPerp]);
-                    }
-                  }
-                  let bestX = baseMidX;
-                  let bestY = baseMidY;
-                  let placed = false;
-                  for (const [ox, oy] of tryOffsets) {
-                    const cx = baseMidX + ox;
-                    const cy = baseMidY + oy;
-                    if (!overlapsAny(cx, cy)) {
-                      bestX = cx;
-                      bestY = cy;
-                      placed = true;
-                      break;
-                    }
-                  }
-                  if (!placed) {
-                    bestX = baseMidX + perpX * 140;
-                    bestY = baseMidY + perpY * 140;
-                  }
-                  labelX = bestX;
-                  labelY = bestY;
-                  placedLabels.push({ x: labelX, y: labelY });
-                }
-
-                const stroke = DIM_STROKE[l.dominant];
-                // Line thickness scales with synapse count for this pair.
-                const synCount = l.synapses.length;
-                const lineWidth = Math.min(5, 1.6 + Math.log2(synCount) * 1.4);
-                return (
-                  <g key={i}>
-                    <line
-                      x1={srcEdge.x}
-                      y1={srcEdge.y}
-                      x2={lineEndX}
-                      y2={lineEndY}
-                      stroke={stroke}
-                      strokeWidth={lineWidth}
-                      strokeLinecap="butt"
-                    />
-                    {/* Tiny invisible segment carries the arrow marker so its tip lands on the card edge */}
-                    <line
-                      x1={lineEndX}
-                      y1={lineEndY}
-                      x2={tipPt.x}
-                      y2={tipPt.y}
-                      stroke="transparent"
-                      strokeWidth={0.1}
-                      markerEnd={`url(#arrow-${l.dominant})`}
-                    />
-                    {l.keyword ? (
-                      <EdgeLabel
-                        key={`${l.synapse.id}-${l.keyword}`}
-                        midX={labelX}
-                        midY={labelY}
-                        keyword={l.keyword}
-                        stackedKeywords={l.stackedKeywords}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setKeywordNote({
-                            keyword: l.keyword!,
-                            description: l.synapse.description,
-                            sourceUrl: l.synapse.source_url,
-                            targetUrl: l.synapse.target_url,
-                            synapse: l.synapse,
-                            synapses: l.synapses,
-                            currentIndex: 0,
-                          });
-                        }}
-                      />
-                    ) : null}
-                  </g>
-                );
-              });
-            })()}
+            {edgeLineElements}
           </svg>
+
+          {/* Keyword labels — HTML layer (SVG foreignObject はモバイル Safari で非表示になりやすい) */}
+          {edgeLabelElements}
 
           {/* Cards */}
           {nodes.map((n) => {
@@ -1957,21 +2072,35 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                   </h2>
                   {(() => {
                     const platform = detectContentPlatform(detailUrl);
-                    // CI カラーを反映した「(メディア名)で作品をみる」ボタン。
-                    const PLATFORM_BTN: Record<string, { name: string; cls: string }> = {
-                      amazon:   { name: "Amazon",      cls: "bg-[#FF9900] text-white hover:brightness-95" },
-                      youtube:  { name: "YouTube",     cls: "bg-[#FF0000] text-white hover:brightness-95" },
-                      netflix:  { name: "Netflix",     cls: "bg-black text-[#E50914] hover:bg-zinc-900" },
-                      disney:   { name: "Disney+",     cls: "bg-[#0063E5] text-white hover:brightness-95" },
-                      prime:    { name: "Prime Video", cls: "bg-[#00A8E1] text-white hover:brightness-95" },
-                      hulu:     { name: "Hulu",        cls: "bg-[#1CE783] text-zinc-900 hover:brightness-95" },
+                    const PLATFORM_BTN: Record<
+                      Exclude<ContentPlatformId, "other">,
+                      { cls: string }
+                    > = {
+                      amazon: { cls: "bg-[#FF9900] text-white hover:brightness-95" },
+                      youtube: { cls: "bg-[#FF0000] text-white hover:brightness-95" },
+                      netflix: { cls: "bg-black text-[#E50914] hover:bg-zinc-900" },
+                      disney: { cls: "bg-[#0063E5] text-white hover:brightness-95" },
+                      prime: { cls: "bg-[#00A8E1] text-white hover:brightness-95" },
+                      hulu: { cls: "bg-[#1CE783] text-zinc-900 hover:brightness-95" },
+                      unext: { cls: "bg-[#0099FF] text-white hover:brightness-95" },
+                      spotify: { cls: "bg-[#1DB954] text-white hover:brightness-95" },
+                      apple_music: { cls: "bg-[#FA243C] text-white hover:brightness-95" },
+                      youtube_music: { cls: "bg-[#FF0000] text-white hover:brightness-95" },
                     };
-                    const meta = PLATFORM_BTN[platform];
-                    const label = meta ? `${meta.name}で作品をみる` : "ページを開く";
+                    const meta = platform !== "other" ? PLATFORM_BTN[platform] : null;
+                    const name =
+                      platform !== "other"
+                        ? contentPlatformDisplayName(platform as AllowedSynapsePlatform)
+                        : null;
+                    const label = name
+                      ? isMusicContentPlatform(platform)
+                        ? `${name}で聴く`
+                        : `${name}で作品をみる`
+                      : "ページを開く";
                     const cls = meta ? meta.cls : "bg-indigo-600 text-white hover:bg-indigo-500";
                     return (
                       <a
-                        href={withAmazonAffiliate(detailUrl)}
+                        href={withSynapseAffiliate(detailUrl)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className={`inline-flex w-fit items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition ${cls}`}
