@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { createServiceClient } from "@/lib/supabase/clients";
 import { UserProfilePage } from "@/components/galaxy/UserProfilePage";
@@ -25,14 +26,19 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
   // Resolve display name (nickname → full_name → email → id-snippet)
   let displayName = userId.slice(0, 12);
   try {
-    const { data: userResult } = await supabase.auth.admin.getUserById(userId);
-    const meta = userResult?.user?.user_metadata;
+    const { data: userResult, error: userError } = await supabase.auth.admin.getUserById(userId);
+    if (userError || !userResult?.user) {
+      notFound();
+    }
+    const meta = userResult.user.user_metadata;
     displayName =
       (meta?.nickname as string | undefined) ??
       (meta?.full_name as string | undefined) ??
-      userResult?.user?.email ??
+      userResult.user.email ??
       userId.slice(0, 12);
-  } catch { /* noop — fallback to id snippet */ }
+  } catch {
+    notFound();
+  }
 
   return (
     <UserProfilePage

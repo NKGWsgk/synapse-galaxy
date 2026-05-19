@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { createBrowserClient } from "@/lib/supabase/browser";
+import { CopyLinkButton } from "@/components/galaxy/CopyLinkButton";
+import { SiteFooter } from "@/components/galaxy/SiteFooter";
 import { GraphView } from "./GraphView";
+import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 
 type Props = {
   userId: string;
@@ -24,7 +27,8 @@ function pickInitialFocus(synapses: SynapseRow[]): string | null {
   for (const [url, count] of counts) {
     if (count > bestCount) { best = url; bestCount = count; }
   }
-  return best ?? synapses[0]?.source_url ?? null;
+  const raw = best ?? synapses[0]?.source_url ?? null;
+  return raw ? normalizeSynapseEndpoint(raw) : null;
 }
 
 export function UserProfilePage({ userId, displayName, synapses: initialSynapses, totalLikes: initialTotalLikes }: Props) {
@@ -32,6 +36,9 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
   const [synapses, setSynapses] = useState<SynapseRow[]>(initialSynapses);
   const [totalLikes, setTotalLikes] = useState<number>(initialTotalLikes);
   const [focusUrl, setFocusUrl] = useState<string | null>(() => pickInitialFocus(initialSynapses));
+  const handleFocusUrl = useCallback((url: string) => {
+    setFocusUrl(normalizeSynapseEndpoint(url));
+  }, []);
   const [listOpen, setListOpen] = useState(false);
 
   // 自分のページか判定（current user id を取得）
@@ -48,6 +55,12 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
   }, []);
 
   const isOwnPage = currentUserId === userId;
+
+  /** プロフィール共有用の絶対URL（ヘッダのコピーボタン用） */
+  const [profileShareUrl, setProfileShareUrl] = useState("");
+  useEffect(() => {
+    setProfileShareUrl(`${window.location.origin}/user/${userId}`);
+  }, [userId]);
 
   const worksCount = useMemo(() => {
     const set = new Set<string>();
@@ -88,35 +101,41 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
   }, []);
 
   return (
-    <div className="flex h-screen min-h-0 w-full flex-col bg-zinc-50">
+    <div className="flex h-[100dvh] min-h-0 w-full flex-col bg-zinc-50">
       {/* シンプルなヘッダー */}
-      <header className="shrink-0 border-b border-zinc-200/80 bg-white/95 px-4 py-3 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-7xl items-center gap-3">
-          <Link href="/" className="flex flex-col leading-none">
+      <header className="shrink-0 border-b border-zinc-200/80 bg-white/95 px-3 py-3 backdrop-blur-sm sm:px-4">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2 sm:gap-3">
+          <Link href="/" className="flex shrink-0 flex-col leading-none">
             <span className="text-[8px] font-semibold uppercase tracking-[0.3em] text-indigo-500/80">Synapse</span>
             <span className="text-sm font-semibold text-zinc-900">Galaxy</span>
           </Link>
-          <span className="text-zinc-300">›</span>
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-600">
+          <span className="hidden text-zinc-300 sm:inline">›</span>
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-600 sm:h-9 sm:w-9 sm:text-sm">
               {(displayName ?? "U").slice(0, 2).toUpperCase()}
             </div>
-            <div>
-              <p className="text-sm font-semibold text-zinc-900">{displayName ?? `User ${userId.slice(0, 8)}`}</p>
-              <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-zinc-900">{displayName ?? `User ${userId.slice(0, 8)}`}</p>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-zinc-500 sm:text-[11px]">
                 <span><span className="font-semibold text-zinc-700">{synapses.length}</span> シナプス</span>
                 <span><span className="font-semibold text-zinc-700">{worksCount}</span> 作品</span>
                 <span><span className="font-semibold text-rose-600">{totalLikes}</span> ♥</span>
               </div>
             </div>
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex w-full items-center justify-end gap-2 sm:ml-auto sm:w-auto">
+            <CopyLinkButton
+              textToCopy={profileShareUrl}
+              idleLabel={isOwnPage ? "URLをコピー" : "URLをコピー"}
+              aria-label="プロフィールページのURLをクリップボードにコピー"
+              className="text-[11px] font-medium sm:text-xs"
+            />
             <button
               type="button"
               onClick={() => setListOpen((v) => !v)}
-              className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50"
+              className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-50 sm:text-xs"
             >
-              {listOpen ? "宇宙を見る" : "シナプス一覧"}
+              {listOpen ? "宇宙を見る" : "一覧"}
             </button>
           </div>
         </div>
@@ -139,7 +158,7 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
                   <div className="mb-2 flex flex-wrap items-center gap-1 text-[11px] font-medium text-zinc-500">
                     <button
                       type="button"
-                      onClick={() => { setFocusUrl(s.source_url); setListOpen(false); }}
+                      onClick={() => { handleFocusUrl(s.source_url); setListOpen(false); }}
                       className="max-w-[200px] truncate text-indigo-700 hover:underline"
                     >
                       {truncUrl(s.source_url)}
@@ -147,7 +166,7 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
                     <span className="text-zinc-300">→</span>
                     <button
                       type="button"
-                      onClick={() => { setFocusUrl(s.target_url); setListOpen(false); }}
+                      onClick={() => { handleFocusUrl(s.target_url); setListOpen(false); }}
                       className="max-w-[200px] truncate text-violet-700 hover:underline"
                     >
                       {truncUrl(s.target_url)}
@@ -197,9 +216,13 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
             </ul>
           </div>
         ) : (
-          <GraphView focusUrl={focusUrl} synapses={synapses} onFocusUrl={setFocusUrl} />
+          <GraphView focusUrl={focusUrl} synapses={synapses} onFocusUrl={handleFocusUrl} />
         )}
       </main>
+
+      <footer className="shrink-0 border-t border-zinc-200/80 bg-white/95 px-4 py-3">
+        <SiteFooter className="justify-center" />
+      </footer>
     </div>
   );
 }

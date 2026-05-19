@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { AuthPanel } from "./AuthPanel";
+import { useAuthFeedback } from "./AuthFeedback";
+import { SiteFooter } from "./SiteFooter";
 import { SmartInputPanel } from "./SmartInputPanel";
 import { createBrowserClient } from "@/lib/supabase/browser";
 
@@ -20,7 +22,17 @@ type Notification = {
   actor_id: string | null;
   read: boolean;
   created_at: string;
+  focusUrl: string | null;
 };
+
+function isLikelyUrl(q: string): boolean {
+  try {
+    new URL(q);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 type RankingEntry = {
   rank: number;
@@ -36,6 +48,8 @@ type Props = {
   onUser: (user: User | null) => void;
   user: User | null;
   onSynapseCreated: () => void;
+  mobileOpen: boolean;
+  onMobileOpenChange: (open: boolean) => void;
 };
 
 const SIDEBAR_W_KEY = "sg-sidebar-w";
@@ -43,7 +57,8 @@ const SIDEBAR_W_MIN = 240;
 const SIDEBAR_W_MAX = 480;
 const SIDEBAR_W_DEFAULT = 320;
 
-export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
+export function Header({ onFocusUrl, onUser, user, onSynapseCreated, mobileOpen, onMobileOpenChange }: Props) {
+  const { notifySessionExpired } = useAuthFeedback();
   const [sidebarWidth, setSidebarWidth] = useState<number>(SIDEBAR_W_DEFAULT);
   const [resizing, setResizing] = useState(false);
   const resizingRef = useRef(false);
@@ -82,6 +97,15 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
     document.addEventListener("mouseup", onUp);
   }, []);
 
+  const closeMobile = useCallback(() => onMobileOpenChange(false), [onMobileOpenChange]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [mobileOpen]);
+
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -112,12 +136,16 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
   const fetchNotifications = useCallback(async (token: string) => {
     try {
       const res = await fetch("/api/notifications", { headers: { Authorization: `Bearer ${token}` } });
+      if (res.status === 401) {
+        notifySessionExpired();
+        return;
+      }
       if (!res.ok) return;
       const j = (await res.json()) as { notifications: Notification[]; unreadCount: number };
       setNotifications(j.notifications);
       setUnreadCount(j.unreadCount);
     } catch { /* noop */ }
-  }, []);
+  }, [notifySessionExpired]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -156,7 +184,7 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
   useEffect(() => {
     const q = search.trim();
     if (!q) { setSearchResults([]); setSearchOpen(false); return; }
-    try { new URL(q); return; } catch { /* not URL */ }
+    if (isLikelyUrl(q)) { setSearchResults([]); setSearchOpen(false); return; }
 
     const t = setTimeout(async () => {
       setSearchLoading(true);
@@ -164,7 +192,7 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
         const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
         const j = (await res.json()) as { results: SearchResult[] };
         setSearchResults(j.results);
-        setSearchOpen(j.results.length > 0);
+        setSearchOpen(true);
       } catch { /* noop */ } finally {
         setSearchLoading(false);
       }
@@ -192,33 +220,68 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
     e.preventDefault();
     const v = search.trim();
     if (!v) return;
-    try {
-      new URL(v);
+    if (isLikelyUrl(v)) {
       onFocusUrl(v);
       setSearch("");
       setSearchOpen(false);
-    } catch { /* URL形式でなければ検索結果から選択 */ }
+      closeMobile();
+      return;
+    }
+    if (searchResults.length > 0) {
+      pickResult(searchResults[0].url);
+      return;
+    }
+    setSearchOpen(true);
+  }
+
+  function handleNotificationClick(n: Notification) {
+    if (n.focusUrl) {
+      onFocusUrl(n.focusUrl);
+      setNotifOpen(false);
+      closeMobile();
+    }
   }
 
   function pickResult(url: string) {
     onFocusUrl(url);
     setSearch("");
     setSearchOpen(false);
+    closeMobile();
+  }
+
+  function handleSynapseCreated() {
+    onSynapseCreated();
+    closeMobile();
   }
 
   return (
-    <aside
-      style={{ width: `${sidebarWidth}px` }}
-      className="relative z-20 flex h-full shrink-0 flex-col gap-3 overflow-y-auto border-r border-zinc-200/80 bg-white/90 px-4 py-4 backdrop-blur-sm"
-    >
-      {/* リサイズハンドル（右端） */}
+    <>
+      {mobileOpen ? (
+        <button
+          type="button"
+          aria-label="メニューを閉じる"
+          className="fixed inset-0 z-40 bg-zinc-900/50 backdrop-blur-[1px] md:hidden"
+          onClick={closeMobile}
+        />
+      ) : null}
+
+      <aside
+        data-sg-sidebar
+        style={{ "--sg-sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
+        className={[
+          "fixed inset-y-0 left-0 z-50 flex h-full w-[min(88vw,320px)] shrink-0 flex-col gap-3 overflow-y-auto border-r border-zinc-200/80 bg-white/95 px-4 py-4 backdrop-blur-sm",
+          "transition-transform duration-200 ease-out md:relative md:z-20 md:w-[var(--sg-sidebar-width)] md:translate-x-0 md:bg-white/90",
+          mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+        ].join(" ")}
+      >
+      {/* リサイズハンドル（デスクトップのみ） */}
       <div
         role="separator"
         aria-orientation="vertical"
         aria-label="サイドバーの幅を調整"
         onMouseDown={startResize}
         className={[
-          "group absolute right-0 top-0 z-30 h-full w-1.5 cursor-col-resize select-none transition",
+          "group absolute right-0 top-0 z-30 hidden h-full w-1.5 cursor-col-resize select-none transition md:block",
           resizing ? "bg-indigo-300/60" : "bg-transparent hover:bg-indigo-200/60",
         ].join(" ")}
       >
@@ -233,11 +296,23 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
           <span className={["block h-0.5 w-0.5 rounded-full transition", resizing ? "bg-indigo-500" : "bg-zinc-400 group-hover:bg-indigo-500"].join(" ")} />
         </div>
       </div>
-      {/* ロゴ */}
-      <a href="/" className="flex shrink-0 flex-col leading-none no-underline">
-        <span className="text-[8px] font-semibold uppercase tracking-[0.3em] text-indigo-500/80">Synapse</span>
-        <span className="text-base font-semibold text-zinc-900">Galaxy</span>
-      </a>
+
+      <div className="flex shrink-0 items-start justify-between gap-2">
+        <a href="/" className="flex flex-col leading-none no-underline" onClick={closeMobile}>
+          <span className="text-[8px] font-semibold uppercase tracking-[0.3em] text-indigo-500/80">Synapse</span>
+          <span className="text-base font-semibold text-zinc-900">Galaxy</span>
+        </a>
+        <button
+          type="button"
+          aria-label="メニューを閉じる"
+          onClick={closeMobile}
+          className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-zinc-100 md:hidden"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
 
       {/* 検索バー */}
       <div ref={searchRef} className="relative">
@@ -253,30 +328,38 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              onFocus={() => { if (searchResults.length > 0) setSearchOpen(true); }}
+              onFocus={() => { if (search.trim() && !isLikelyUrl(search.trim())) setSearchOpen(true); }}
               placeholder="URLまたはタイトル…"
               className="w-full rounded-full border border-zinc-200 bg-zinc-50 py-1.5 pl-8 pr-3 text-xs text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
             />
-            {searchOpen && searchResults.length > 0 ? (
+            {searchOpen && search.trim() && !isLikelyUrl(search.trim()) ? (
               <div className="absolute left-0 top-full z-50 mt-1 w-full overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl">
-                {searchResults.map((r) => (
-                  <button
-                    key={r.url}
-                    type="button"
-                    onClick={() => pickResult(r.url)}
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition hover:bg-zinc-50"
-                  >
-                    {r.imageUrl ? (
-                      <img src={r.imageUrl} alt="" className="h-8 w-8 shrink-0 rounded-md object-cover" loading="lazy" />
-                    ) : (
-                      <div className="h-8 w-8 shrink-0 rounded-md bg-zinc-100" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      {r.siteName ? <p className="text-[10px] font-medium text-indigo-600">{r.siteName}</p> : null}
-                      <p className="truncate text-xs font-semibold text-zinc-900">{r.title ?? r.url}</p>
-                    </div>
-                  </button>
-                ))}
+                {searchLoading ? (
+                  <p className="px-3 py-3 text-center text-xs text-zinc-400">検索中…</p>
+                ) : searchResults.length > 0 ? (
+                  searchResults.map((r) => (
+                    <button
+                      key={r.url}
+                      type="button"
+                      onClick={() => pickResult(r.url)}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition hover:bg-zinc-50"
+                    >
+                      {r.imageUrl ? (
+                        <img src={r.imageUrl} alt="" className="h-8 w-8 shrink-0 rounded-md object-cover" loading="lazy" />
+                      ) : (
+                        <div className="h-8 w-8 shrink-0 rounded-md bg-zinc-100" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        {r.siteName ? <p className="text-[10px] font-medium text-indigo-600">{r.siteName}</p> : null}
+                        <p className="truncate text-xs font-semibold text-zinc-900">{r.title ?? r.url}</p>
+                      </div>
+                    </button>
+                  ))
+                ) : (
+                  <p className="px-3 py-3 text-center text-xs text-zinc-400">
+                    「{search.trim()}」に一致する作品が見つかりません
+                  </p>
+                )}
               </div>
             ) : null}
           </div>
@@ -291,7 +374,7 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
           </svg>
           <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">シナプスを繋ぐ</span>
         </div>
-        <SmartInputPanel user={user} onCreated={onSynapseCreated} />
+        <SmartInputPanel user={user} onCreated={handleSynapseCreated} />
       </section>
 
       {/* ランキング（常時表示） */}
@@ -361,7 +444,7 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
         </button>
 
         {notifOpen ? (
-          <div className="absolute bottom-0 left-full z-50 ml-2 w-72 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl">
+          <div className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl md:bottom-0 md:left-full md:right-auto md:mb-0 md:ml-2 md:w-72">
             <div className="border-b border-zinc-100 px-3 py-2">
               <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">通知</p>
             </div>
@@ -372,9 +455,20 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
             ) : (
               <ul className="max-h-72 overflow-y-auto">
                 {notifications.map((n) => (
-                  <li key={n.id} className={["flex items-start gap-2 px-3 py-2.5 text-xs", n.read ? "text-zinc-500" : "bg-indigo-50/50 text-zinc-800"].join(" ")}>
-                    <span className="mt-0.5 shrink-0 text-base">{n.type === "liked" ? "♥" : "✦"}</span>
-                    <span>{n.type === "liked" ? "あなたの接続がいいねされました" : "新しいシナプスが追加されました"}</span>
+                  <li key={n.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleNotificationClick(n)}
+                      disabled={!n.focusUrl}
+                      className={[
+                        "flex w-full items-start gap-2 px-3 py-2.5 text-left text-xs transition",
+                        n.read ? "text-zinc-500" : "bg-indigo-50/50 text-zinc-800",
+                        n.focusUrl ? "hover:bg-zinc-50" : "cursor-default opacity-80",
+                      ].join(" ")}
+                    >
+                      <span className="mt-0.5 shrink-0 text-base">{n.type === "liked" ? "♥" : "✦"}</span>
+                      <span>{n.type === "liked" ? "あなたの接続がいいねされました" : "新しいシナプスが追加されました"}</span>
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -385,6 +479,9 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated }: Props) {
 
       {/* ログイン / ユーザーアバター */}
       <AuthPanel onUser={onUser} />
+
+      <SiteFooter className="shrink-0 border-t border-zinc-100 pt-3" onLinkClick={closeMobile} />
     </aside>
+    </>
   );
 }

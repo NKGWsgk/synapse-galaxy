@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { amazonAsinFromUrl, isAmazonUrl, withAmazonAffiliate } from "@/lib/amazon";
+import { amazonAsinFromUrl, isAmazonUrl, stripAmazonAffiliate, withAmazonAffiliate } from "@/lib/amazon";
+import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { fetchOgp } from "@/lib/ogp";
 import { createAnonClient, createServiceClient, type ContentMetadataRow } from "@/lib/supabase/clients";
 
@@ -64,6 +65,9 @@ function needsTitleRefresh(title: string | null | undefined, pageUrl: string): b
     if (host.includes("disneyplus.com")) {
       if (tl === "disney+" || tl === "disney plus" || tl === "disneyplus") return true;
     }
+    if (host.includes("hulu.com") || host.includes("hulu.jp")) {
+      if (tl === "hulu") return true;
+    }
     if (host.includes("amazon.co.jp") && pageUrl.includes("/gp/video")) {
       if (tl.includes("prime video") && t.length < 24) return true;
     }
@@ -95,10 +99,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "url required" }, { status: 400 });
   }
   try {
-    const normalizedUrl = withAmazonAffiliate(url);
+    const normalizedUrl = normalizeSynapseEndpoint(url);
 
     const supabase = createAnonClient();
-    const candidates = normalizedUrl === url ? [url] : [normalizedUrl, url];
+    const candidates = Array.from(
+      new Set([normalizedUrl, url, stripAmazonAffiliate(url), withAmazonAffiliate(normalizedUrl)]),
+    );
     let cached: ContentMetadataRow | null = null;
 
     for (const u of candidates) {

@@ -8,6 +8,7 @@ export function isVideoStyleOgpPageUrl(url: string): boolean {
     if (h === "youtu.be" || h.includes("youtube.com")) return true;
     if (h.includes("netflix.com")) return true;
     if (h.includes("disneyplus.com")) return true;
+    if (h.includes("hulu.com") || h.includes("hulu.jp")) return true;
     if (h.includes("primevideo.com")) return true;
     if (h.includes("amazon.") && url.includes("/gp/video")) return true;
     return false;
@@ -54,7 +55,7 @@ export function ogpImageLayout(pageUrl: string, slot: OgpImageSlot): PortraitCla
       "relative flex min-h-0 w-full min-w-0 flex-1 flex-col justify-center overflow-hidden bg-zinc-950",
     modal: "relative w-full shrink-0 overflow-hidden bg-zinc-950",
     inlineThumb:
-      "relative h-12 w-[calc(3rem*16/9)] max-w-[40vw] shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950",
+      "relative h-12 w-[4.75rem] shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950",
   };
 
   const innerBySlot: Record<OgpImageSlot, string> = {

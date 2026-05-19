@@ -5,7 +5,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import * as d3 from "d3-force";
 
 import { isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
-import { ContentPlatformMark, detectContentPlatform } from "@/components/galaxy/ContentPlatformMark";
+import { EdgeKeywordInnerText } from "@/components/galaxy/EdgeKeywordInnerText";
+import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
+import { detectContentPlatform } from "@/lib/contentPlatform";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { isAmazonUrl, withAmazonAffiliate } from "@/lib/amazon";
@@ -15,6 +17,7 @@ import {
   OgpTileMedia,
   SynapseConnectionTitles,
   ConnectionWorksLine,
+  ConnectionWorksUrlsStrip,
   ogpMiniCache,
   fetchOgpMiniPayload,
   synapseToDims,
@@ -66,6 +69,70 @@ const POLES = {
 
 const ZOOM_MIN = 0.3;
 const ZOOM_MAX = 2.5;
+
+/** +/−／100% UI など、画面中心を軸にしたズームの補間時間 */
+const CAMERA_UI_SMOOTH_MS = 340;
+/** フィット調整は少し長め */
+const CAMERA_FIT_SMOOTH_MS = 520;
+
+/** ツールバー ± は「初期100%」基準で 80/90/100… の 10% 刻み */
+const ZOOM_DISPLAY_STEP_PCT = 10;
+
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+/**
+ * Wheel と同様に、「ビューポート中心にある世界座標」を保ったまま z0→z1 に変更する pan。
+ */
+function panForZoomTowardViewportCenter(
+  z0: number,
+  pan0: { x: number; y: number },
+  z1: number,
+  vw: number,
+  vh: number,
+): { x: number; y: number } {
+  const cxw = vw / 2;
+  const cyw = vh / 2;
+  const sx = cxw;
+  const sy = cyw;
+  const worldX = (sx - pan0.x - cxw) / z0;
+  const worldY = (sy - pan0.y - cyw) / z0;
+  return {
+    x: sx - cxw - worldX * z1,
+    y: sy - cyw - worldY * z1,
+  };
+}
+
+/** ベースズームに対する表示％を決めうちしたときの実倍率（clamp 済み）。 */
+function zoomFromBaselineDisplayPercent(baselineZoom: number, displayPercent: number): number {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, baselineZoom * (displayPercent / 100)));
+}
+
+/** +1 は表示％を約 10% 上げ、−1 は下げる。baseline 未定時は倍率約±10%。 */
+function zoomByDisplayPercentStep(
+  direction: 1 | -1,
+  z0: number,
+  pan0: { x: number; y: number },
+  baselineZoom: number | undefined,
+  vw: number,
+  vh: number,
+): { z1: number; pan1: { x: number; y: number } } | null {
+  if (!baselineZoom || baselineZoom <= 1e-9) {
+    const mul = direction > 0 ? 1 + ZOOM_DISPLAY_STEP_PCT / 100 : 1 / (1 + ZOOM_DISPLAY_STEP_PCT / 100);
+    const z1 = direction > 0
+      ? Math.min(ZOOM_MAX, z0 * mul)
+      : Math.max(ZOOM_MIN, z0 * mul);
+    if (Math.abs(z1 - z0) < 1e-6) return null;
+    return { z1, pan1: panForZoomTowardViewportCenter(z0, pan0, z1, vw, vh) };
+  }
+  const rawPct100 = (z0 / baselineZoom) * 100;
+  const snapped = Math.round(rawPct100 / ZOOM_DISPLAY_STEP_PCT) * ZOOM_DISPLAY_STEP_PCT;
+  const nextPct = snapped + direction * ZOOM_DISPLAY_STEP_PCT;
+  const z1 = zoomFromBaselineDisplayPercent(baselineZoom, nextPct);
+  if (Math.abs(z1 - z0) < 1e-6) return null;
+  return { z1, pan1: panForZoomTowardViewportCenter(z0, pan0, z1, vw, vh) };
+}
 
 // ── Color & dominant-dim ─────────────────────────────────────────────────────
 
@@ -144,8 +211,8 @@ function buildNeighborMap(synapses: SynapseRow[]): { neighbors: NeighborMap; url
   for (const s of synapses) {
     const sN = normalizeSynapseEndpoint(s.source_url);
     const tN = normalizeSynapseEndpoint(s.target_url);
-    if (!urlForNorm.has(sN)) urlForNorm.set(sN, s.source_url);
-    if (!urlForNorm.has(tN)) urlForNorm.set(tN, s.target_url);
+    if (!urlForNorm.has(sN)) urlForNorm.set(sN, normalizeSynapseEndpoint(s.source_url));
+    if (!urlForNorm.has(tN)) urlForNorm.set(tN, normalizeSynapseEndpoint(s.target_url));
     if (!neighbors.has(sN)) neighbors.set(sN, new Set());
     if (!neighbors.has(tN)) neighbors.set(tN, new Set());
     neighbors.get(sN)!.add(tN);
@@ -350,18 +417,35 @@ function GraphCard({
           onError={() => setImgError(true)}
         />
       </div>
-      <p
-        className="line-clamp-2 h-[2.6em] max-h-[2.6em] shrink-0 overflow-hidden px-1.5 py-1 text-center text-[11px] font-medium leading-tight text-zinc-900"
-        title={displayTitle}
-      >
-        {displayTitle}
-      </p>
+      <div className="relative flex min-h-[2.875rem] shrink-0 flex-col justify-center px-1.5 py-1">
+        <p
+          className="line-clamp-2 w-full overflow-hidden text-center text-[11px] font-medium leading-snug text-zinc-900 [overflow-wrap:anywhere]"
+          title={displayTitle}
+        >
+          {displayTitle}
+        </p>
+      </div>
       <ContentPlatformMark pageUrl={url} />
     </div>
   );
 }
 
 // ── Edge label (midpoint pill) ───────────────────────────────────────────────
+
+/** ラベル枠の横幅上限（長文はこの幅で折り返し） */
+const EDGE_LABEL_MAX_W = 174;
+/** 極端に小さくならないよう下限 */
+const EDGE_LABEL_MIN_W = 48;
+const EDGE_LABEL_MAX_LINES = 2;
+const EDGE_LABEL_VERTICAL_PAD_TOTAL_PX = 8;
+const EDGE_LABEL_LINE_HEIGHT_APPROX_PX = 14;
+const EDGE_LABEL_BODY_MAX_PX =
+  EDGE_LABEL_VERTICAL_PAD_TOTAL_PX + EDGE_LABEL_MAX_LINES * EDGE_LABEL_LINE_HEIGHT_APPROX_PX;
+const EDGE_LABEL_BODY_MIN_PX = 22;
+
+/** 折り返し後の見た目幅・高さに合わせる（nowrap 計測だと複数行で横にゆとりだけ出やすい） */
+const EDGE_LABEL_INNER_WRAP_CLS =
+  "box-border rounded-2xl border border-indigo-100 px-0.5 py-1 text-center text-[10px] font-semibold leading-snug break-keep break-words whitespace-pre-line";
 
 function EdgeLabel({
   midX, midY, keyword, stackedKeywords, onClick,
@@ -370,24 +454,59 @@ function EdgeLabel({
   stackedKeywords?: string[];
   onClick: (e: React.MouseEvent) => void;
 }) {
-  // Stack peek visuals: render up to 2 phantom labels behind the top one,
-  // offset slightly. They're decorative only — clicking the top label opens
-  // the modal that cycles through all synapses.
   const peeks = stackedKeywords ?? [];
-  // Slightly taller foreignObject to accommodate peeks
   const extraHeight = peeks.length * 6;
+  const probeRef = useRef<HTMLDivElement>(null);
+
+  const [box, setBox] = useState({ w: EDGE_LABEL_MAX_W, h: EDGE_LABEL_BODY_MAX_PX });
+
+  /** max-width で折り換えたときのボーダーボックス幅・高さ（最長行基準になる） */
+  useLayoutEffect(() => {
+    const el = probeRef.current;
+    if (!el) return;
+    const w = Math.ceil(el.offsetWidth);
+    const h = Math.ceil(el.offsetHeight);
+    setBox({
+      w: Math.min(EDGE_LABEL_MAX_W, Math.max(EDGE_LABEL_MIN_W, w)),
+      h: Math.min(EDGE_LABEL_BODY_MAX_PX, Math.max(EDGE_LABEL_BODY_MIN_PX, h)),
+    });
+  }, [keyword]);
+
+  const foH = box.h + extraHeight;
+
   return (
-    <foreignObject x={midX - 70} y={midY - 22 - extraHeight} width={140} height={44 + extraHeight} style={{ overflow: "visible", pointerEvents: "auto" }}>
-      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-        {/* Phantom peeking labels (behind the main one) */}
+    <foreignObject
+      x={midX - box.w / 2}
+      y={midY - box.h / 2 - extraHeight}
+      width={box.w}
+      height={foH}
+      style={{ overflow: "visible", pointerEvents: "auto" }}
+    >
+      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "visible" }}>
+        <div
+          ref={probeRef}
+          aria-hidden
+          lang="ja"
+          className={`pointer-events-none absolute left-[-9999px] top-0 shadow-none ${EDGE_LABEL_INNER_WRAP_CLS} bg-transparent text-indigo-700`}
+          style={{
+            display: "block",
+            width: "fit-content",
+            maxWidth: EDGE_LABEL_MAX_W,
+            visibility: "hidden",
+            whiteSpace: "normal",
+          }}
+        >
+          <EdgeKeywordInnerText keyword={keyword} />
+        </div>
         {peeks.map((_, idx) => {
-          const depth = idx + 1; // 1, 2
+          const depth = idx + 1;
           return (
             <div
               key={idx}
               aria-hidden
-              className="pointer-events-none absolute max-w-[140px] rounded-2xl border border-indigo-100 bg-white px-2 py-1 text-center text-[10px] font-semibold leading-snug text-indigo-400 shadow-sm"
+              className={`pointer-events-none absolute rounded-2xl border border-indigo-100 bg-white px-0.5 py-1 text-center text-[10px] font-semibold leading-snug text-indigo-400 shadow-sm`}
               style={{
+                maxWidth: box.w,
                 top: `calc(50% - ${depth * 4}px)`,
                 left: `${depth * 4}px`,
                 right: `${depth * 4}px`,
@@ -402,19 +521,13 @@ function EdgeLabel({
         })}
         <button
           type="button"
+          lang="ja"
           onClick={onClick}
           onPointerDown={(e) => e.stopPropagation()}
-          className="pointer-events-auto relative z-10 max-w-[140px] rounded-2xl border border-indigo-100 bg-white/95 px-2 py-1 text-center text-[10px] font-semibold leading-snug text-indigo-700 shadow-sm transition hover:max-w-[260px] hover:border-indigo-300 hover:bg-white hover:text-indigo-800 hover:z-50"
-          style={{
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            wordBreak: "break-word",
-          }}
+          className={`pointer-events-auto relative z-10 max-w-full w-full bg-white/95 shadow-sm transition text-indigo-700 hover:border-indigo-300 hover:bg-white hover:text-indigo-800 hover:z-50 hover:brightness-[1.02] ${EDGE_LABEL_INNER_WRAP_CLS}`}
           title={peeks.length > 0 ? `${keyword} (他${peeks.length}件)` : keyword}
         >
-          {keyword}
+          <EdgeKeywordInnerText keyword={keyword} />
         </button>
       </div>
     </foreignObject>
@@ -463,7 +576,7 @@ function KeywordModalWorksLine({ sourceUrl, targetUrl, focusUrl, onClickWork }: 
   const activeCls = `${baseCls} bg-indigo-50 font-bold text-indigo-700 ring-indigo-200 hover:bg-indigo-100`;
   const mutedCls  = `${baseCls} bg-white font-medium text-zinc-600 ring-zinc-200 hover:bg-zinc-50 hover:text-indigo-700 hover:ring-indigo-200`;
   return (
-    <div className="shrink-0 border-b border-zinc-100 px-4 py-3 sm:px-5">
+    <div id="keyword-note-connection" className="shrink-0 border-b border-zinc-100 px-4 py-3 sm:px-5">
       <div className="flex items-center justify-center gap-3">
         <button
           type="button"
@@ -487,25 +600,21 @@ function KeywordModalWorksLine({ sourceUrl, targetUrl, focusUrl, onClickWork }: 
   );
 }
 
-/** 詳細パネル内の「関連シナプス」リスト行。視覚的階層：
- *  1. 相手作品名（枠付きチップ） — 固定幅・truncate
- *  2. キーワード（「」付き indigo 太字）
- *  3. 接続理由（小さい muted テキスト）
- *  4. ♥ いいね（右下）
+/** 詳細パネル内の「関連シナプス」リスト行。
+ *  出発: 本作 → 相手 / 着地: 相手 → 本作 の3カラム（長題は折り込み）。
+ *  キーワード・接続理由・いいねを続けて表示。
  */
-function RelatedSynapseRow({ synapse, direction, focusNorm, accessToken }: {
+function RelatedSynapseRow({ synapse, direction, focusNorm, accessToken, onClickOther }: {
   synapse: SynapseRow;
   direction: "outgoing" | "incoming";
   focusNorm: string;
   accessToken: string | null;
+  onClickOther: (url: string) => void;
 }) {
   // 「相手」作品 = focus じゃない方
   const otherUrl = direction === "outgoing" ? synapse.target_url : synapse.source_url;
   const otherNorm = normalizeSynapseEndpoint(otherUrl);
   const isFocusSrc = normalizeSynapseEndpoint(synapse.source_url) === focusNorm;
-  // 矢印の向き: focus → other (outgoing), other → focus (incoming)
-  const arrowDir = direction === "outgoing" ? "→" : "←";
-  const arrowSide = direction === "outgoing" ? "left" : "right";
 
   const [otherTitle, setOtherTitle] = useState<string | null>(null);
   useEffect(() => {
@@ -517,44 +626,59 @@ function RelatedSynapseRow({ synapse, direction, focusNorm, accessToken }: {
     return () => { cancelled = true; };
   }, [otherUrl]);
 
-  const TITLE_MAX = 22;
-  const rawTitle = otherTitle ?? otherUrl;
-  const truncated = rawTitle.length > TITLE_MAX ? rawTitle.slice(0, TITLE_MAX - 1) + "…" : rawTitle;
+  const rawOtherTitle = otherTitle ?? otherUrl;
   const firstKeyword = synapse.keywords?.find((k) => k && k.trim())?.trim();
 
-  // 矢印の位置を方向で切り替え
-  const arrow = (
-    <span className="shrink-0 text-base font-normal text-zinc-400" aria-hidden>{arrowDir}</span>
-  );
-  const workChip = (
+  const thisWorkPill = (
     <span
-      className="inline-flex h-10 max-w-[180px] items-center justify-center rounded-lg bg-white px-2.5 py-1.5 text-center text-[11px] font-medium leading-snug text-zinc-700 ring-1 ring-inset ring-zinc-200"
-      title={rawTitle}
+      className="inline-flex h-10 shrink-0 items-center justify-center self-stretch whitespace-nowrap rounded-lg bg-indigo-50 px-3 text-[11px] font-bold text-indigo-800 ring-1 ring-inset ring-indigo-200 sm:h-11 sm:min-w-[4rem]"
+      title="いま詳細を開いている作品"
     >
-      <span className="line-clamp-2 break-words">{truncated}</span>
+      本作
     </span>
+  );
+  const otherWorkChip = (
+    <button
+      type="button"
+      onClick={() => onClickOther(otherUrl)}
+      className={[
+        "flex min-h-[2.875rem] min-w-0 w-full flex-col justify-center rounded-lg px-2.5 py-1.5 text-left ring-1 ring-inset transition sm:min-h-11",
+        "bg-white text-[11px] font-medium leading-snug text-zinc-700 ring-zinc-200",
+        "hover:bg-zinc-50 hover:text-zinc-900 hover:ring-zinc-300",
+      ].join(" ")}
+      title={rawOtherTitle}
+    >
+      <span className="line-clamp-2 w-full break-words text-center sm:text-left">{rawOtherTitle}</span>
+    </button>
+  );
+  const arrow = (
+    <span className="shrink-0 text-base font-semibold text-zinc-300" aria-hidden>→</span>
   );
 
   return (
-    <li className="rounded-lg border border-zinc-200/90 bg-white/90 px-3 py-2.5">
-      {/* Top: 相手作品名 (chip) + 矢印 */}
-      <div className="mb-2 flex items-center gap-2">
-        {arrowSide === "right" ? <>{workChip}{arrow}</> : <>{arrow}{workChip}</>}
-        <span className="text-[10px] font-medium text-zinc-400">
-          {direction === "outgoing" ? "へ繋ぐ" : "から繋がる"}
-        </span>
+    <li className="rounded-xl border border-zinc-200/90 bg-white/95 px-3 py-2.5">
+      <div className="mb-2 grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-x-2">
+        {direction === "outgoing" ? (
+          <>
+            {thisWorkPill}
+            <div className="flex shrink-0 items-center justify-center">{arrow}</div>
+            {otherWorkChip}
+          </>
+        ) : (
+          <>
+            {otherWorkChip}
+            <div className="flex shrink-0 items-center justify-center">{arrow}</div>
+            {thisWorkPill}
+          </>
+        )}
       </div>
-      {/* キーワード（接続テーマ） */}
       {firstKeyword ? (
         <p className="mb-1.5 text-[13px] font-bold leading-snug text-indigo-700">「{firstKeyword}」</p>
       ) : null}
-      {/* 接続理由 */}
       <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-zinc-500">{synapse.description.trim() || "—"}</p>
-      {/* like */}
       <div className="mt-2 flex items-center justify-end">
         <LikeButton synapse={synapse} accessToken={accessToken} />
       </div>
-      {/* unused vars to silence lint */}
       <span hidden>{otherNorm}{isFocusSrc ? "" : ""}</span>
     </li>
   );
@@ -598,6 +722,37 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   const zoomRef = useRef(zoom);
   useEffect(() => { panRef.current = pan; }, [pan]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+  /** フォーカス初回Tweenで算出した pan/zoom。ツールバー％はこれを100% とする（実倍率は変更しない）。 */
+  const [cameraUIBaseline, setCameraUIBaseline] = useState<{
+    pan: { x: number; y: number };
+    zoom: number;
+  } | null>(null);
+  /** setState より先に effect 内で読む用（初回で baseline 確定後も deps 変化なしで済ませる）。 */
+  const cameraUIBaselineRef = useRef<{ pan: { x: number; y: number }; zoom: number } | null>(null);
+
+  const cameraAnimTokenRef = useRef(0);
+  const smoothCameraTo = useCallback(
+    (targetPan: { x: number; y: number }, targetZoom: number, durationMs: number) => {
+      const token = ++cameraAnimTokenRef.current;
+      const startPan = panRef.current;
+      const startZoom = zoomRef.current;
+      const t0 = performance.now();
+      function step(now: number) {
+        if (token !== cameraAnimTokenRef.current) return;
+        const k = Math.min(1, (now - t0) / durationMs);
+        const e = easeOutCubic(k);
+        setPan({
+          x: startPan.x + (targetPan.x - startPan.x) * e,
+          y: startPan.y + (targetPan.y - startPan.y) * e,
+        });
+        setZoom(startZoom + (targetZoom - startZoom) * e);
+        if (k < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    },
+    [],
+  );
 
   // Build graph (memoized on focus + synapses identity) — used for VISIBILITY
   // filtering only (which N=2 nodes to render). Positions come from the global
@@ -1080,70 +1235,60 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  // Camera tween: when focus changes (or viewport resizes), animate pan + zoom
-  // to fit the bounding box of the currently-visible N=2 nodes, with the focused
-  // node ending up at the viewport center.
+  // Camera tween: first load fits N=1 neighborhood and locks that zoom as UI "100%".
+  // When focus moves to another work, keep that zoom and re-center pan (always 100% scale).
   useEffect(() => {
     if (viewport.w === 0 || viewport.h === 0) return;
     const worldPos = worldPositionsRef.current;
     if (worldPos.size === 0) return;
 
-    // Compute bbox of the *immediate* (N=1) neighborhood — focus + direct
-    // neighbors only. With all-nodes visibility, fitting to N=2 zooms out too
-    // much; the user wants to see the focused area comfortably.
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    const hx = CARD_W / 2;
-    const hy = CARD_H / 2;
     let hubPos: { x: number; y: number } | null = null;
     for (const n of builtNodes) {
-      // hop=1 = direct neighbor of focus; isHub = focus itself
-      if (!n.isHub && n.hop !== 1) continue;
+      if (!n.isHub) continue;
       const p = worldPos.get(n.norm);
-      if (!p) continue;
-      if (n.isHub) hubPos = p;
-      if (p.x - hx < minX) minX = p.x - hx;
-      if (p.y - hy < minY) minY = p.y - hy;
-      if (p.x + hx > maxX) maxX = p.x + hx;
-      if (p.y + hy > maxY) maxY = p.y + hy;
+      if (p) hubPos = p;
+      break;
     }
-    if (!isFinite(minX) || !hubPos) return;
+    if (!hubPos) return;
 
-    const bboxW = Math.max(1, maxX - minX);
-    const bboxH = Math.max(1, maxY - minY);
-    const PAD = 60;
-    const zX = (viewport.w - PAD * 2) / bboxW;
-    const zY = (viewport.h - PAD * 2) / bboxH;
-    // +10% over the natural fit, per user request.
-    const targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(zX, zY) * 1.1));
-    // Pan target so that the focused node ends up at viewport center.
-    //   screen = center + pan + zoom * world
-    //   center == center + pan + zoom * hub  →  pan = -zoom * hub
-    const targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
+    const stored = cameraUIBaselineRef.current;
+    let targetZoom: number;
+    let targetPan: { x: number; y: number };
 
-    const startPan = panRef.current;
-    const startZoom = zoomRef.current;
-    const duration = 320;
-    const t0 = performance.now();
-    function ease(t: number): number {
-      return 1 - Math.pow(1 - t, 3);
+    if (stored && stored.zoom > 1e-9) {
+      targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, stored.zoom));
+      targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
+    } else {
+      // Establish "100%" scale once from bbox of hub + immediate (N=1) neighbors.
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      const hx = CARD_W / 2;
+      const hy = CARD_H / 2;
+      for (const n of builtNodes) {
+        if (!n.isHub && n.hop !== 1) continue;
+        const p = worldPos.get(n.norm);
+        if (!p) continue;
+        if (p.x - hx < minX) minX = p.x - hx;
+        if (p.y - hy < minY) minY = p.y - hy;
+        if (p.x + hx > maxX) maxX = p.x + hx;
+        if (p.y + hy > maxY) maxY = p.y + hy;
+      }
+      if (!isFinite(minX)) return;
+      const bboxW = Math.max(1, maxX - minX);
+      const bboxH = Math.max(1, maxY - minY);
+      const PAD = 60;
+      const zX = (viewport.w - PAD * 2) / bboxW;
+      const zY = (viewport.h - PAD * 2) / bboxH;
+      targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(zX, zY) * 1.1));
+      targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
+      cameraUIBaselineRef.current = { pan: targetPan, zoom: targetZoom };
+      setCameraUIBaseline(cameraUIBaselineRef.current);
     }
-    let cancelled = false;
-    function step(now: number) {
-      if (cancelled) return;
-      const k = Math.min(1, (now - t0) / duration);
-      const e = ease(k);
-      setPan({
-        x: startPan.x + (targetPan.x - startPan.x) * e,
-        y: startPan.y + (targetPan.y - startPan.y) * e,
-      });
-      setZoom(startZoom + (targetZoom - startZoom) * e);
-      if (k < 1) requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
-    return () => { cancelled = true; };
-    // worldPositionsRef.current changes are paired with simNodesRef updates which
-    // also bump setTick; we depend on builtNodes (changes per focus) and viewport.
-  }, [focusUrl, builtNodes, viewport.w, viewport.h]);
+
+    smoothCameraTo(targetPan, targetZoom, 320);
+    return () => {
+      cameraAnimTokenRef.current += 1;
+    };
+  }, [focusUrl, builtNodes, viewport.w, viewport.h, smoothCameraTo]);
 
   // ── Pan / Zoom interactions ─────────────────────────────────────────────────
   const wheelTimerRef = useRef<number | null>(null);
@@ -1176,6 +1321,9 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   const bgDragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
   const onBgPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
+    const t = e.target as HTMLElement | null;
+    // 右上ズームツールバーへは伝播しない（viewport が capture すると +/− が効かなくなる）
+    if (t?.closest("[data-graph-zoom-toolbar]")) return;
     bgDragRef.current = { startX: e.clientX, startY: e.clientY, panX: panRef.current.x, panY: panRef.current.y };
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
   }, []);
@@ -1567,6 +1715,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                     />
                     {l.keyword ? (
                       <EdgeLabel
+                        key={`${l.synapse.id}-${l.keyword}`}
                         midX={labelX}
                         midY={labelY}
                         keyword={l.keyword}
@@ -1619,18 +1768,42 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
           })}
         </div>
 
-        {/* Zoom controls */}
-        <div className="pointer-events-auto absolute right-5 top-5 z-50 flex flex-col items-stretch overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-lg">
+        {/* Zoom controls — viewport の setPointerCapture から除外（親 onPointerDown より先で止める） */}
+        <div
+          data-graph-zoom-toolbar
+          className="pointer-events-auto absolute right-5 top-5 z-[120] flex flex-col items-stretch overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-lg"
+          onPointerDown={(e) => e.stopPropagation()}
+          onWheel={(e) => e.stopPropagation()}
+        >
           <button
             type="button"
             onClick={() => {
-              const z1 = Math.min(ZOOM_MAX, zoomRef.current * 1.2);
-              setZoom(z1);
+              if (viewport.w <= 0 || viewport.h <= 0) return;
+              const next = zoomByDisplayPercentStep(
+                1,
+                zoomRef.current,
+                panRef.current,
+                cameraUIBaseline?.zoom,
+                viewport.w,
+                viewport.h,
+              );
+              if (!next) return;
+              smoothCameraTo(next.pan1, next.z1, CAMERA_UI_SMOOTH_MS);
             }}
-            disabled={zoom >= ZOOM_MAX - 0.001}
+            disabled={
+              viewport.w <= 0 ||
+              zoomByDisplayPercentStep(
+                1,
+                zoom,
+                pan,
+                cameraUIBaseline?.zoom,
+                viewport.w,
+                viewport.h,
+              ) === null
+            }
             className="flex h-11 w-11 items-center justify-center text-zinc-700 transition hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
-            title="ズームイン"
-            aria-label="ズームイン"
+            title={`ズームイン（+${ZOOM_DISPLAY_STEP_PCT}%）`}
+            aria-label={`ズームイン（+${ZOOM_DISPLAY_STEP_PCT}%）`}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
@@ -1642,13 +1815,32 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
           <button
             type="button"
             onClick={() => {
-              const z1 = Math.max(ZOOM_MIN, zoomRef.current / 1.2);
-              setZoom(z1);
+              if (viewport.w <= 0 || viewport.h <= 0) return;
+              const next = zoomByDisplayPercentStep(
+                -1,
+                zoomRef.current,
+                panRef.current,
+                cameraUIBaseline?.zoom,
+                viewport.w,
+                viewport.h,
+              );
+              if (!next) return;
+              smoothCameraTo(next.pan1, next.z1, CAMERA_UI_SMOOTH_MS);
             }}
-            disabled={zoom <= ZOOM_MIN + 0.001}
+            disabled={
+              viewport.w <= 0 ||
+              zoomByDisplayPercentStep(
+                -1,
+                zoom,
+                pan,
+                cameraUIBaseline?.zoom,
+                viewport.w,
+                viewport.h,
+              ) === null
+            }
             className="flex h-11 w-11 items-center justify-center text-zinc-700 transition hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
-            title="ズームアウト"
-            aria-label="ズームアウト"
+            title={`ズームアウト（−${ZOOM_DISPLAY_STEP_PCT}%）`}
+            aria-label={`ズームアウト（−${ZOOM_DISPLAY_STEP_PCT}%）`}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
@@ -1660,18 +1852,43 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
           {/* Zoom % display (also clickable to reset zoom to 1) */}
           <button
             type="button"
-            onClick={() => setZoom(1)}
+            onClick={() => {
+              if (viewport.w <= 0 || viewport.h <= 0) return;
+              const b = cameraUIBaseline;
+              if (b) {
+                smoothCameraTo(b.pan, b.zoom, CAMERA_UI_SMOOTH_MS);
+                return;
+              }
+              const z0 = zoomRef.current;
+              const z1 = 1;
+              const pan1 = panForZoomTowardViewportCenter(z0, panRef.current, z1, viewport.w, viewport.h);
+              smoothCameraTo(pan1, z1, CAMERA_UI_SMOOTH_MS);
+            }}
             className="flex h-8 w-11 items-center justify-center text-[11px] font-semibold tabular-nums text-zinc-500 transition hover:bg-indigo-50 hover:text-indigo-700"
-            title="ズーム100%にリセット"
-            aria-label="ズーム100%にリセット"
+            title={
+              cameraUIBaseline
+                ? "初期の表示領域（100%）に戻す"
+                : "ズーム100%にリセット"
+            }
+            aria-label={
+              cameraUIBaseline ? "初期の表示領域（100%）に戻す" : "ズーム100%にリセット"
+            }
           >
-            {Math.round(zoom * 100)}%
+            {cameraUIBaseline && cameraUIBaseline.zoom > 1e-9
+              ? `${Math.round((zoom / cameraUIBaseline.zoom) * 100)}%`
+              : `${Math.round(zoom * 100)}%`}
           </button>
           <div className="h-px bg-zinc-200" aria-hidden />
-          {/* Fit-to-content: compute bbox of currently-visible (N=2) nodes and fit camera */}
+          {/* 初期100% と同じ向き／範囲へ戻す（旧「全体フィット」の枠線アイコン） */}
           <button
             type="button"
             onClick={() => {
+              if (viewport.w <= 0 || viewport.h <= 0) return;
+              const b = cameraUIBaseline;
+              if (b) {
+                smoothCameraTo(b.pan, b.zoom, CAMERA_UI_SMOOTH_MS);
+                return;
+              }
               const worldPos = worldPositionsRef.current;
               if (worldPos.size === 0) return;
               let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1696,12 +1913,16 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
               const zX = (vp.width - PAD * 2) / Math.max(1, bboxW);
               const zY = (vp.height - PAD * 2) / Math.max(1, bboxH);
               const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(zX, zY)));
-              setZoom(z);
-              setPan({ x: -cx * z, y: -cy * z });
+              const targetPan = { x: -cx * z, y: -cy * z };
+              smoothCameraTo(targetPan, z, CAMERA_FIT_SMOOTH_MS);
             }}
             className="flex h-11 w-11 items-center justify-center text-zinc-700 transition hover:bg-indigo-50 hover:text-indigo-700"
-            title="全体にフィット"
-            aria-label="全体にフィット"
+            title={
+              cameraUIBaseline ? "初期表示（100%）に戻す" : "全体にフィット"
+            }
+            aria-label={
+              cameraUIBaseline ? "初期表示（100%）に戻す" : "全体にフィット"
+            }
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path d="M3 8V3h5M21 8V3h-5M3 16v5h5M21 16v5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -1743,7 +1964,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                       netflix:  { name: "Netflix",     cls: "bg-black text-[#E50914] hover:bg-zinc-900" },
                       disney:   { name: "Disney+",     cls: "bg-[#0063E5] text-white hover:brightness-95" },
                       prime:    { name: "Prime Video", cls: "bg-[#00A8E1] text-white hover:brightness-95" },
-                      wikipedia:{ name: "Wikipedia",   cls: "bg-zinc-800 text-white hover:bg-zinc-700" },
+                      hulu:     { name: "Hulu",        cls: "bg-[#1CE783] text-zinc-900 hover:brightness-95" },
                     };
                     const meta = PLATFORM_BTN[platform];
                     const label = meta ? `${meta.name}で作品をみる` : "ページを開く";
@@ -1788,7 +2009,20 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                           <>
                             <li className="text-[10px] font-semibold tracking-[0.05em] text-indigo-500">関連シナプス：出発</li>
                             {outgoingSynapses.map((s) => (
-                              <RelatedSynapseRow key={s.id} synapse={s} direction="outgoing" focusNorm={detailFocusNorm} accessToken={accessToken} />
+                              <RelatedSynapseRow
+                                key={s.id}
+                                synapse={s}
+                                direction="outgoing"
+                                focusNorm={detailFocusNorm}
+                                accessToken={accessToken}
+                                onClickOther={(url) => {
+                                  onFocusUrl(url);
+                                  window.setTimeout(() => {
+                                    setDetailUrl(url);
+                                    setDetailOpen(true);
+                                  }, 180);
+                                }}
+                              />
                             ))}
                           </>
                         ) : null}
@@ -1796,7 +2030,20 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                           <>
                             <li className={["text-[10px] font-semibold tracking-[0.05em] text-zinc-500", outgoingSynapses.length > 0 ? "mt-4 pt-3 border-t border-zinc-200/70" : ""].join(" ")}>関連シナプス：着地</li>
                             {incomingSynapses.map((s) => (
-                              <RelatedSynapseRow key={s.id} synapse={s} direction="incoming" focusNorm={detailFocusNorm} accessToken={accessToken} />
+                              <RelatedSynapseRow
+                                key={s.id}
+                                synapse={s}
+                                direction="incoming"
+                                focusNorm={detailFocusNorm}
+                                accessToken={accessToken}
+                                onClickOther={(url) => {
+                                  onFocusUrl(url);
+                                  window.setTimeout(() => {
+                                    setDetailUrl(url);
+                                    setDetailOpen(true);
+                                  }, 180);
+                                }}
+                              />
                             ))}
                           </>
                         ) : null}
@@ -1817,7 +2064,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
           <motion.div key="keyword-note-overlay" className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
             <button type="button" aria-label="閉じる" className="absolute inset-0 bg-zinc-900/40 backdrop-blur-[2px]" onClick={() => setKeywordNote(null)} />
             <motion.div
-              role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-body"
+              role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-urls keyword-note-body"
               className="relative z-10 flex max-h-[min(85vh,620px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.18)]"
               initial={{ opacity: 0, scale: 0.96, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 10 }}
               transition={{ type: "spring", stiffness: 420, damping: 34 }}
@@ -1842,6 +2089,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                   }, 180);
                 }}
               />
+              <ConnectionWorksUrlsStrip sourceUrl={keywordNote.sourceUrl} targetUrl={keywordNote.targetUrl} />
               <div id="keyword-note-body" className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
                 <h2 className="text-sm font-semibold leading-snug text-indigo-900 sm:text-base">「{keywordNote.keyword}」</h2>
                 <div className="rounded-xl border border-zinc-100 bg-zinc-50/90 px-3 py-3 sm:px-3.5 sm:py-3.5">

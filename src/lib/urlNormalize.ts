@@ -1,4 +1,4 @@
-import { isAmazonUrl, withAmazonAffiliate } from "@/lib/amazon";
+import { isAmazonUrl, stripAmazonAffiliate } from "@/lib/amazon";
 
 /** Amazon: /dp/ASIN または /gp/product/ASIN から ASIN を抜く */
 function amazonAsin(url: URL): string | null {
@@ -10,14 +10,14 @@ function amazonAsin(url: URL): string | null {
 
 /**
  * シナプス endpoint（source/target）比較用の正規化。
- * - 非Amazon: そのまま（affiliate 付与のみ amazon で揃える）
- * - Amazon: ホスト + ASIN へ畳み込み（長いタイトル付きURLとも一致）
+ * - 非Amazon: そのまま（hash 除去）
+ * - Amazon: ホスト + ASIN へ畳み込み（アフィリエイト tag は含めない）
  */
 export function normalizeSynapseEndpoint(raw: string): string {
-  const withAff = withAmazonAffiliate(raw.trim());
+  const cleaned = stripAmazonAffiliate(raw.trim());
   try {
-    const u = new URL(withAff);
-    if (!isAmazonUrl(withAff)) {
+    const u = new URL(cleaned);
+    if (!isAmazonUrl(cleaned)) {
       u.hash = "";
       return u.toString();
     }
@@ -30,13 +30,12 @@ export function normalizeSynapseEndpoint(raw: string): string {
           : host === "amazon.com" || host.endsWith("amazon.com")
             ? "www.amazon.com"
             : u.hostname;
-      const bare = `https://${baseHost}/dp/${asin}`;
-      // tag 無し行（手入力/旧データ）と tag 付きフォーカスを一致させる
-      return withAmazonAffiliate(bare);
+      return `https://${baseHost}/dp/${asin}`;
     }
     u.hash = "";
+    u.searchParams.delete("tag");
     return u.toString();
   } catch {
-    return withAff;
+    return cleaned;
   }
 }

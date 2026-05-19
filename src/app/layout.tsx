@@ -17,6 +17,11 @@ export const metadata: Metadata = {
   description: "8属性でコンテンツを結ぶシナプス型ネットワーク",
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{

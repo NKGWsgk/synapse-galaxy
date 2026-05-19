@@ -1,36 +1,16 @@
 "use client";
 
+import {
+  detectContentPlatform,
+  type ContentPlatformId,
+} from "@/lib/contentPlatform";
+
+export type { ContentPlatformId };
+export { detectContentPlatform };
+
 /**
  * コンパス各マス用。サムネ右上にサービスが分かる小バッジ（色＋1文字・記号）。マス角に沿わせる。
  */
-
-export type ContentPlatformId =
-  | "amazon"
-  | "netflix"
-  | "youtube"
-  | "disney"
-  | "prime"
-  | "wikipedia"
-  | "other";
-
-export function detectContentPlatform(url: string): ContentPlatformId {
-  try {
-    const h = new URL(url).hostname.toLowerCase();
-    const path = url.toLowerCase();
-    if (h.includes("primevideo.com")) return "prime";
-    if (h === "amzn.to" || h.endsWith(".amzn.to") || h.includes("amazon.")) {
-      if (path.includes("/gp/video")) return "prime";
-      return "amazon";
-    }
-    if (h.includes("netflix.com")) return "netflix";
-    if (h === "youtu.be" || h.includes("youtube.com")) return "youtube";
-    if (h.includes("disneyplus.com")) return "disney";
-    if (h.includes("wikipedia.org")) return "wikipedia";
-    return "other";
-  } catch {
-    return "other";
-  }
-}
 
 const BADGE: Record<
   Exclude<ContentPlatformId, "other">,
@@ -61,10 +41,10 @@ const BADGE: Record<
     className: "bg-[#00A8E1] text-white",
     glyph: "P",
   },
-  wikipedia: {
-    name: "Wikipedia",
-    className: "bg-zinc-800 text-white",
-    glyph: "W",
+  hulu: {
+    name: "Hulu",
+    className: "bg-[#1CE783] text-zinc-900",
+    glyph: "H",
   },
 };
 

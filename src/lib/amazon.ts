@@ -21,6 +21,18 @@ export function isAmazonUrl(url: string): boolean {
   }
 }
 
+/** Amazon URL からアフィリエイト `tag` を除去（共有・表示・DB 保存用）。 */
+export function stripAmazonAffiliate(url: string): string {
+  if (!isAmazonUrl(url)) return url;
+  try {
+    const u = new URL(url);
+    u.searchParams.delete("tag");
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 /** Amazon ドメインの URL に `tag` を付与（既存 tag は上書き）。タグ未設定時は URL をそのまま返す。 */
 export function withAmazonAffiliate(url: string, tag: string = DEFAULT_TAG): string {
   if (!isAmazonUrl(url)) return url;

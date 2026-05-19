@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { createAuthedAnonClient } from "@/lib/supabase/clients";
+import { createAuthedAnonClient, createServiceClient } from "@/lib/supabase/clients";
+import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 
 async function resolveUser(req: Request): Promise<{ userId: string; token: string } | null> {
   const authz = req.headers.get("authorization") ?? req.headers.get("Authorization");
@@ -31,7 +32,28 @@ export async function GET(req: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const unreadCount = (data ?? []).filter((n) => !n.read).length;
+  const synapseIds = [...new Set((data ?? []).map((n) => n.synapse_id).filter(Boolean))] as string[];
+  const focusUrlBySynapseId = new Map<string, string>();
 
-  return NextResponse.json({ notifications: data ?? [], unreadCount });
+  if (synapseIds.length > 0) {
+    const service = createServiceClient();
+    const { data: synapses } = await service
+      .from("synapses")
+      .select("id, source_url")
+      .in("id", synapseIds);
+
+    for (const row of synapses ?? []) {
+      const rec = row as { id: string; source_url: string };
+      focusUrlBySynapseId.set(rec.id, normalizeSynapseEndpoint(rec.source_url));
+    }
+  }
+
+  const notifications = (data ?? []).map((n) => ({
+    ...n,
+    focusUrl: n.synapse_id ? focusUrlBySynapseId.get(n.synapse_id) ?? null : null,
+  }));
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  return NextResponse.json({ notifications, unreadCount });
 }

@@ -7,7 +7,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { AnimatePresence, motion } from "framer-motion";
 import { getOgpImageDisplaySrc, isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
 import { ogpImageLayout } from "@/lib/ogpImagePresentation";
+import { EdgeKeywordInnerText } from "@/components/galaxy/EdgeKeywordInnerText";
+import { CopyLinkButton } from "@/components/galaxy/CopyLinkButton";
 import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
+import { useAuthFeedback } from "@/components/galaxy/AuthFeedback";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { isAmazonUrl, withAmazonAffiliate } from "@/lib/amazon";
@@ -188,6 +191,7 @@ async function fetchOgpDisplayLabel(url: string): Promise<string> {
 // ── いいねボタン ────────────────────────────────────────────────────────────
 
 export function LikeButton({ synapse, accessToken }: { synapse: SynapseRow; accessToken: string | null }) {
+  const { notifySessionExpired } = useAuthFeedback();
   const [liked, setLiked] = useState(false);
   const [count, setCount] = useState(synapse.likes_count ?? 0);
   const [loading, setLoading] = useState(false);
@@ -211,6 +215,11 @@ export function LikeButton({ synapse, accessToken }: { synapse: SynapseRow; acce
         method,
         headers: { Authorization: `Bearer ${accessToken}` },
       });
+      if (res.status === 401) {
+        notifySessionExpired();
+        return;
+      }
+      if (!res.ok) return;
       const j = (await res.json()) as { likes_count?: number };
       setLiked(!liked);
       if (j.likes_count !== undefined) setCount(j.likes_count);
@@ -218,7 +227,7 @@ export function LikeButton({ synapse, accessToken }: { synapse: SynapseRow; acce
     } catch { /* noop */ } finally {
       setLoading(false);
     }
-  }, [accessToken, liked, loading, synapse.id]);
+  }, [accessToken, liked, loading, synapse.id, notifySessionExpired]);
 
   return (
     <button
@@ -339,6 +348,61 @@ export function ConnectionWorksLine({ sourceUrl, targetUrl, focusUrl }: { source
         <span className="shrink-0 text-center text-base font-normal text-zinc-400" aria-hidden>→</span>
         <span className={`min-w-0 text-center sm:flex-1 sm:text-left ${tgtActive ? activeCls : mutedCls}`}>{right}</span>
       </p>
+    </div>
+  );
+}
+
+/** キーワード／シナプス詳細で、出発・着地作品のページURLを表示（コピー・新規タブ用） */
+export function ConnectionWorksUrlsStrip({
+  sourceUrl,
+  targetUrl,
+}: {
+  sourceUrl: string;
+  targetUrl: string;
+}) {
+  const displaySrc = normalizeSynapseEndpoint(sourceUrl);
+  const displayTgt = normalizeSynapseEndpoint(targetUrl);
+  const hrefSrc = withAmazonAffiliate(displaySrc);
+  const hrefTgt = withAmazonAffiliate(displayTgt);
+  return (
+    <div id="keyword-note-urls" className="space-y-2 border-b border-zinc-100 bg-zinc-50/40 px-4 py-2.5 sm:px-5">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-500">作品URL</p>
+      <div className="flex items-start gap-2">
+        <p className="min-w-0 flex-1 break-all text-[11px] leading-snug">
+          <span className="font-medium text-zinc-500">出発：</span>
+          <a
+            href={hrefSrc}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-indigo-600 underline-offset-2 hover:text-indigo-800 hover:underline"
+          >
+            {displaySrc}
+          </a>
+        </p>
+        <CopyLinkButton
+          textToCopy={displaySrc}
+          idleLabel="コピー"
+          aria-label="出発作品のURLをクリップボードにコピー"
+        />
+      </div>
+      <div className="flex items-start gap-2">
+        <p className="min-w-0 flex-1 break-all text-[11px] leading-snug">
+          <span className="font-medium text-zinc-500">着地：</span>
+          <a
+            href={hrefTgt}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-indigo-600 underline-offset-2 hover:text-indigo-800 hover:underline"
+          >
+            {displayTgt}
+          </a>
+        </p>
+        <CopyLinkButton
+          textToCopy={displayTgt}
+          idleLabel="コピー"
+          aria-label="着地作品のURLをクリップボードにコピー"
+        />
+      </div>
     </div>
   );
 }
@@ -561,10 +625,15 @@ function OgpMiniCell({
         <>
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
             <OgpTileMedia pageUrl={url ?? synapse.target_url} imageUrl={showImage ? data?.imageUrl : null} slot="gridMini" loading={false} onError={() => setImgError(true)} />
-      </div>
-          <p className="line-clamp-2 h-[2.6em] max-h-[2.6em] shrink-0 overflow-hidden px-1.5 py-1 text-center text-[9px] font-medium leading-tight text-zinc-800 sm:text-[10px]" title={displayTitle}>
-        {displayTitle}
-      </p>
+          </div>
+          <div className="relative flex min-h-[2.75rem] shrink-0 flex-col justify-center px-1 py-1 sm:min-h-[2.875rem] sm:px-1.5 sm:py-1">
+            <p
+              className="line-clamp-2 w-full overflow-hidden text-center text-[9px] font-medium leading-snug text-zinc-800 [overflow-wrap:anywhere] sm:text-[10px]"
+              title={displayTitle}
+            >
+              {displayTitle}
+            </p>
+          </div>
           <ContentPlatformMark pageUrl={url ?? synapse.target_url} />
           {/* チェーン深さピル */}
           {showDepthPill && (
@@ -1061,6 +1130,7 @@ function RingKeywordLabels({
           <button
             key={it.key}
             type="button"
+            lang="ja"
             title="クリックで接続の理由（全文）を表示"
             className={[
               "pointer-events-auto absolute min-w-[110px] max-w-[min(30vw,140px)] -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-2xl border border-indigo-200/60 bg-white/65 px-2 py-0.5 text-center text-[11px] font-medium leading-tight text-indigo-700 shadow-sm backdrop-blur-[3px] transition hover:border-indigo-300 hover:bg-white/95 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2",
@@ -1073,7 +1143,9 @@ function RingKeywordLabels({
             onBlur={() => onHoverChange(null)}
             onClick={(e) => { e.stopPropagation(); onKeywordNoteClick({ keyword: it.label, description: it.description, sourceUrl: it.sourceUrl, targetUrl: it.targetUrl, synapse: it.synapse }); }}
           >
-            <span className="line-clamp-3 break-words">{it.label}</span>
+            <span className="line-clamp-3 break-keep break-words whitespace-pre-line leading-snug">
+              <EdgeKeywordInnerText keyword={it.label} />
+            </span>
           </button>
         );
       })}
@@ -2179,7 +2251,7 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
           <motion.div key="keyword-note-overlay" className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
             <button type="button" aria-label="閉じる" className="absolute inset-0 bg-zinc-900/40 backdrop-blur-[2px]" onClick={() => setKeywordNote(null)} />
             <motion.div
-              role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-body"
+              role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-urls keyword-note-body"
               className="relative z-10 flex max-h-[min(85vh,620px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.18)]"
               initial={{ opacity: 0, scale: 0.96, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 10 }}
               transition={{ type: "spring", stiffness: 420, damping: 34 }}
@@ -2190,6 +2262,7 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
                 <button type="button" onClick={() => setKeywordNote(null)} className="rounded-lg px-2 py-1 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900">閉じる</button>
               </div>
               <ConnectionWorksLine sourceUrl={keywordNote.sourceUrl} targetUrl={keywordNote.targetUrl} focusUrl={focusUrl} />
+              <ConnectionWorksUrlsStrip sourceUrl={keywordNote.sourceUrl} targetUrl={keywordNote.targetUrl} />
               <div id="keyword-note-body" className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
                 <h2 className="text-sm font-semibold leading-snug text-indigo-900 sm:text-base">キーワード「{keywordNote.keyword}」</h2>
                 <div className="rounded-xl border border-zinc-100 bg-zinc-50/90 px-3 py-3 sm:px-3.5 sm:py-3.5">

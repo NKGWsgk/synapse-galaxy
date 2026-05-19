@@ -1,11 +1,25 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { User } from "@supabase/supabase-js";
+import {
+  ALLOWED_SYNAPSE_ALERT_MESSAGE,
+  ALLOWED_SYNAPSE_URL_MESSAGE,
+  isAllowedSynapseUrl,
+  synapseUrlFieldError,
+} from "@/lib/contentPlatform";
+import { SYNAPSE_EDGE_REASON_MAX_CHARS, SYNAPSE_EDGE_TITLE_MAX_CHARS } from "@/lib/synapseLimits";
 import { formatWorkDisplayTitle, getOgpImageDisplaySrc } from "@/lib/ogpDisplay";
 import { ogpImageLayout } from "@/lib/ogpImagePresentation";
+import {
+  clearSmartInputDraft,
+  hasSmartInputDraftContent,
+  loadSmartInputDraft,
+  saveSmartInputDraft,
+} from "@/lib/smartInputDraft";
 import { createBrowserClient } from "@/lib/supabase/browser";
+import { useAuthFeedback } from "./AuthFeedback";
 
 type OgpPreview = {
   title: string | null;
@@ -20,6 +34,48 @@ function isValidUrl(s: string): boolean {
   try { new URL(s); return true; } catch { return false; }
 }
 
+function validateSynapseEndpointUrls(source: string, target: string): string | null {
+  const srcErr = synapseUrlFieldError(source);
+  if (srcErr) return `出発作品: ${srcErr}`;
+  const tgtErr = synapseUrlFieldError(target);
+  if (tgtErr) return `着地作品: ${tgtErr}`;
+  return null;
+}
+
+function PlatformUrlAlert({ message }: { message: string }) {
+  return (
+    <p
+      role="alert"
+      className="mt-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] leading-snug text-rose-800"
+    >
+      {message}
+    </p>
+  );
+}
+
+function AllowedUrlHint() {
+  return (
+    <span className="group relative inline-flex shrink-0 align-middle">
+      <button
+        type="button"
+        aria-label="登録できる作品URLについて"
+        className="inline-flex h-3.5 w-3.5 items-center justify-center text-zinc-400 transition hover:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+      >
+        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+          <circle cx="12" cy="12" r="10" />
+          <path strokeLinecap="round" d="M12 16v-4M12 8h.01" />
+        </svg>
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-[calc(100%+4px)] right-0 z-30 w-52 rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-left text-[10px] leading-snug text-zinc-600 opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 sm:w-56"
+      >
+        {ALLOWED_SYNAPSE_URL_MESSAGE}
+      </span>
+    </span>
+  );
+}
+
 function OgpPreviewCard({ url, label }: { url: string; label: string }) {
   const [data, setData] = useState<OgpPreview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -30,6 +86,12 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
     const u = url.trim();
     if (!u) { setData(null); setLoading(false); setError(null); return; }
     if (!isValidUrl(u)) { setData(null); setLoading(false); setError("URL形式が正しくないかも"); return; }
+    if (!isAllowedSynapseUrl(u)) {
+      setData(null);
+      setLoading(false);
+      setError(ALLOWED_SYNAPSE_ALERT_MESSAGE);
+      return;
+    }
 
     const hit = ogpPreviewCache.get(u);
     if (hit) { setData(hit); setLoading(false); setError(null); return; }
@@ -59,11 +121,10 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
   if (!url.trim()) return null;
 
   const title = formatWorkDisplayTitle(data?.title ?? null, url) ?? data?.title?.trim() ?? null;
-  const desc = data?.description?.trim() || null;
   const thumbLayout = ogpImageLayout(url, "inlineThumb");
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-2 shadow-sm">
+    <div className="min-w-0 w-full rounded-xl border border-zinc-200 bg-white p-2 shadow-sm">
       <div className="mb-1 flex items-center justify-between gap-2">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">{label}</p>
         {loading ? <span className="text-[10px] text-zinc-400">取得中…</span> : null}
@@ -71,8 +132,14 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
       {error ? (
         <p className="text-xs text-rose-600">{error}</p>
       ) : (
-        <div className="flex min-w-0 items-start gap-2">
-          <div className={thumbLayout.outer}>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <div
+            className={
+              thumbLayout.mode === "video"
+                ? "relative aspect-video max-h-16 w-full shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950"
+                : thumbLayout.outer
+            }
+          >
             {data?.imageUrl && !imgError ? (
               thumbLayout.mode === "video" ? (
                 <div className={thumbLayout.inner}>
@@ -95,10 +162,9 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
               )
             ) : null}
           </div>
-          <div className="min-w-0 flex-1">
-            {data?.siteName ? <p className="text-[10px] font-medium text-indigo-600">{data.siteName}</p> : null}
-            <p className="line-clamp-2 text-xs font-semibold text-zinc-900">{title ?? "（タイトル取得なし）"}</p>
-            {desc ? <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-500">{desc}</p> : null}
+          <div className="min-w-0 flex-1 overflow-hidden">
+            {data?.siteName ? <p className="truncate text-[10px] font-medium text-indigo-600">{data.siteName}</p> : null}
+            <p className="truncate text-xs font-semibold leading-snug text-zinc-900">{title ?? "（タイトル取得なし）"}</p>
           </div>
         </div>
       )}
@@ -106,10 +172,16 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
   );
 }
 
-const TITLE_MAX = 30;
+const TITLE_MAX = SYNAPSE_EDGE_TITLE_MAX_CHARS;
+const REASON_MAX = SYNAPSE_EDGE_REASON_MAX_CHARS;
+const DRAFT_SAVE_MS = 400;
 
 export function SmartInputPanel({ user, onCreated }: { user: User | null; onCreated: () => void }) {
   const supabase = useMemo(() => createBrowserClient(), []);
+  const { notifySessionExpired } = useAuthFeedback();
+  const draftUserId = user?.id ?? null;
+  const draftScopeRef = useRef(draftUserId);
+  const draftHydratedRef = useRef(false);
   const [sourceUrl, setSourceUrl] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -118,9 +190,46 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
   const [message, setMessage] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  useEffect(() => {
+    const scope = draftUserId;
+    draftScopeRef.current = scope;
+    draftHydratedRef.current = false;
+    const draft = loadSmartInputDraft(scope);
+    if (draft) {
+      setSourceUrl(draft.sourceUrl);
+      setTargetUrl(draft.targetUrl);
+      setTitle(draft.title);
+      setDescription(draft.description);
+    }
+    draftHydratedRef.current = true;
+  }, [draftUserId]);
+
+  useEffect(() => {
+    if (!draftHydratedRef.current) return;
+    const scope = draftUserId;
+    const draft = { sourceUrl, targetUrl, title, description };
+    if (!hasSmartInputDraftContent(draft)) {
+      clearSmartInputDraft(scope);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      if (draftScopeRef.current !== scope) return;
+      saveSmartInputDraft(scope, draft);
+    }, DRAFT_SAVE_MS);
+    return () => window.clearTimeout(t);
+  }, [sourceUrl, targetUrl, title, description, draftUserId]);
+
+  const sourceUrlError = synapseUrlFieldError(sourceUrl);
+  const targetUrlError = synapseUrlFieldError(targetUrl);
+  const hasUrlError = Boolean(sourceUrlError || targetUrlError);
+
   function handleSubmitClick(e: FormEvent) {
     e.preventDefault();
-    // Form's native required + this submit handler ensures all fields are filled
+    const urlErr = validateSynapseEndpointUrls(sourceUrl, targetUrl);
+    if (urlErr) {
+      setMessage(urlErr);
+      return;
+    }
     setMessage(null);
     setConfirmOpen(true);
   }
@@ -141,12 +250,19 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
         body: JSON.stringify({ sourceUrl, targetUrl, title: title.trim(), description }),
       });
       const data = await res.json();
+      if (res.status === 401) {
+        notifySessionExpired();
+        setMessage("ログインが必要です");
+        setConfirmOpen(false);
+        return;
+      }
       if (!res.ok) {
         setMessage(data.error ?? "保存に失敗しました");
         setConfirmOpen(false);
         return;
       }
       setMessage("シナプスを繋ぎました！");
+      clearSmartInputDraft(draftUserId);
       setSourceUrl("");
       setTargetUrl("");
       setTitle("");
@@ -169,34 +285,67 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
         </p>
       ) : null}
 
-      <div className="grid gap-1.5 sm:grid-cols-2">
-        <label className="block text-[11px] font-medium text-zinc-600">
-          出発作品
-          <input
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            value={sourceUrl}
-            onChange={(e) => setSourceUrl(e.target.value)}
-            placeholder="https://..."
-            required
-          />
-        </label>
-        <label className="block text-[11px] font-medium text-zinc-600">
-          着地作品
-          <input
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            value={targetUrl}
-            onChange={(e) => setTargetUrl(e.target.value)}
-            placeholder="https://..."
-            required
-          />
-        </label>
-      </div>
-
-      {(sourceUrl.trim() || targetUrl.trim()) ? (
-        <div className="grid gap-1.5 sm:grid-cols-2">
-          <div>{sourceUrl.trim() ? <OgpPreviewCard url={sourceUrl} label="出発作品" /> : null}</div>
-          <div>{targetUrl.trim() ? <OgpPreviewCard url={targetUrl} label="着地作品" /> : null}</div>
+      <div className="mb-0.5 flex items-center gap-1">
+        <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5">
+          <label htmlFor="synapse-source-url" className="text-[11px] font-medium text-zinc-600">
+            出発作品
+          </label>
+          <label htmlFor="synapse-target-url" className="text-[11px] font-medium text-zinc-600">
+            着地作品
+          </label>
         </div>
+        <AllowedUrlHint />
+      </div>
+      <motion.div layout className="grid gap-1.5 sm:grid-cols-2">
+        <div>
+          <input
+            id="synapse-source-url"
+            className={[
+              "w-full rounded-lg border bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:outline-none focus:ring-2",
+              sourceUrlError
+                ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
+                : "border-zinc-200 focus:border-indigo-300 focus:ring-indigo-100",
+            ].join(" ")}
+            value={sourceUrl}
+            onChange={(e) => {
+              setSourceUrl(e.target.value);
+              if (message && !message.includes("！")) setMessage(null);
+            }}
+            placeholder="Amazon / Netflix / Hulu…"
+            required
+          />
+          {sourceUrlError ? <PlatformUrlAlert message={sourceUrlError} /> : null}
+        </div>
+        <div>
+          <input
+            id="synapse-target-url"
+            className={[
+              "w-full rounded-lg border bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:outline-none focus:ring-2",
+              targetUrlError
+                ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
+                : "border-zinc-200 focus:border-indigo-300 focus:ring-indigo-100",
+            ].join(" ")}
+            value={targetUrl}
+            onChange={(e) => {
+              setTargetUrl(e.target.value);
+              if (message && !message.includes("！")) setMessage(null);
+            }}
+            placeholder="Amazon / Netflix / Hulu…"
+            required
+          />
+          {targetUrlError ? <PlatformUrlAlert message={targetUrlError} /> : null}
+        </div>
+      </motion.div>
+
+      {(sourceUrl.trim() && !sourceUrlError) || (targetUrl.trim() && !targetUrlError) ? (
+        <motion.div layout className="grid gap-1.5 sm:grid-cols-2">
+          <div className="min-w-0">
+            {sourceUrl.trim() && !sourceUrlError ? <OgpPreviewCard url={sourceUrl} label="出発作品" /> : null}
+          </div>
+          <div className="min-w-0">
+            {targetUrl.trim() && !targetUrlError ? <OgpPreviewCard url={targetUrl} label="着地作品" /> : null}
+          </div>
+        </motion.div>
       ) : null}
 
       <div>
@@ -216,27 +365,38 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
         </p>
       </div>
 
-      <label className="block text-[11px] font-medium text-zinc-600">
-        接続理由
-        <textarea
-          className="mt-0.5 min-h-[56px] w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="なぜこの2作品は繋がるのか…"
-          required
-        />
-      </label>
+      <div>
+        <label className="block text-[11px] font-medium text-zinc-600">
+          接続理由
+          <textarea
+            className="mt-0.5 min-h-[56px] w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            value={description}
+            onChange={(e) => setDescription(e.target.value.slice(0, REASON_MAX))}
+            placeholder="なぜこの2作品は繋がるのか…"
+            required
+            maxLength={REASON_MAX}
+          />
+        </label>
+        <p
+          className={`text-right text-[10px] tabular-nums ${description.length >= REASON_MAX ? "text-rose-400" : "text-zinc-400"}`}
+        >
+          {description.length} / {REASON_MAX}
+        </p>
+      </div>
 
       <button
         type="submit"
-        disabled={loading || !user}
+        disabled={loading || !user || hasUrlError}
         className="w-full rounded-full bg-indigo-600 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
       >
         {loading ? "保存中…" : "シナプスを繋ぐ"}
       </button>
 
       {message ? (
-        <p className={`text-xs ${message.includes("！") ? "text-emerald-600" : "text-zinc-600"}`}>
+        <p
+          role="alert"
+          className={`text-xs ${message.includes("！") ? "text-emerald-600" : "text-rose-700"}`}
+        >
           {message}
         </p>
       ) : null}
