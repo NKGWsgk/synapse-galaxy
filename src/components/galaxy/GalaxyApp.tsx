@@ -296,6 +296,7 @@ export function GalaxyApp() {
                   synapses={synapses}
                   workMap={workEndpoints}
                   onFocusUrl={handleFocusUrl}
+                  mobileMenuOpen={mobileNavOpen}
                 />
               </motion.div>
             ) : (

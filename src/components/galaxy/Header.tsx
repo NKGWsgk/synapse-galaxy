@@ -269,7 +269,7 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated, mobileOpen,
         data-sg-sidebar
         style={{ "--sg-sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
         className={[
-          "fixed inset-y-0 left-0 z-50 flex h-full w-[min(88vw,320px)] shrink-0 flex-col gap-3 overflow-y-auto border-r border-zinc-200/80 bg-white/95 px-4 py-4 backdrop-blur-sm",
+          "fixed inset-y-0 left-0 z-50 flex h-full w-full shrink-0 flex-col gap-3 overflow-y-auto border-r border-zinc-200/80 bg-white/95 px-4 py-4 backdrop-blur-sm",
           "transition-transform duration-200 ease-out md:relative md:z-20 md:w-[var(--sg-sidebar-width)] md:translate-x-0 md:bg-white/90",
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         ].join(" ")}

@@ -48,6 +48,8 @@ type Props = {
   /** プロフィール一覧など親から作品詳細モーダルを開く */
   detailRequest?: GraphDetailRequest | null;
   onDetailRequestHandled?: () => void;
+  /** モバイルメニュー展開中（ズーム UI を隠す） */
+  mobileMenuOpen?: boolean;
 };
 
 // ── Layout constants ─────────────────────────────────────────────────────────
@@ -569,12 +571,12 @@ function GraphCard({
       onPointerDown={onPointerDown}
       className={[
         "relative flex flex-col overflow-visible rounded-xl bg-white text-left shadow-[0_3px_12px_rgba(0,0,0,0.08)] transition-transform duration-150 will-change-transform",
-        isFocus ? "ring-2 ring-indigo-400" : "ring-1 ring-zinc-200/70",
+        isFocus ? "ring-2 ring-inset ring-indigo-400" : "ring-1 ring-inset ring-zinc-200/70",
         loadingHint ? "" : "hover:scale-[1.04] hover:z-30",
       ].join(" ")}
       style={{ width: CARD_W, height: CARD_H, cursor: "pointer", touchAction: "none" }}
     >
-      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-t-xl">
+      <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-t-xl">
         <OgpTileMedia
           pageUrl={url}
           imageUrl={showImage ? data!.imageUrl : null}
@@ -582,6 +584,7 @@ function GraphCard({
           loading={loading}
           onError={() => setImgError(true)}
         />
+        <ContentPlatformMark pageUrl={url} />
       </div>
       <div className="relative flex min-h-[2.875rem] shrink-0 flex-col justify-center overflow-visible rounded-b-xl bg-white px-1.5 py-1">
         <p
@@ -595,7 +598,6 @@ function GraphCard({
           {displayTitle}
         </p>
       </div>
-      <ContentPlatformMark pageUrl={url} />
     </div>
   );
 }
@@ -852,7 +854,7 @@ function PosterLink({ userId }: { userId: string }) {
 
 // ── Main component ──────────────────────────────────────────────────────────
 
-export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailRequest, onDetailRequestHandled }: Props) {
+export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailRequest, onDetailRequestHandled, mobileMenuOpen = false }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentLayerRef = useRef<HTMLDivElement>(null);
   const viewportCenterRef = useRef({ cx: 0, cy: 0 });
@@ -2278,7 +2280,10 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
         {/* Zoom controls — viewport の setPointerCapture から除外（親 onPointerDown より先で止める） */}
         <div
           data-graph-zoom-toolbar
-          className="pointer-events-auto absolute right-3 top-3 z-[120] flex flex-col items-stretch overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-lg md:right-5 md:top-5"
+          className={[
+            "pointer-events-auto absolute right-3 top-3 z-[120] flex flex-col items-stretch overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-lg md:right-5 md:top-5",
+            mobileMenuOpen ? "max-md:hidden" : "",
+          ].join(" ")}
           onPointerDown={(e) => e.stopPropagation()}
           onWheel={(e) => e.stopPropagation()}
         >

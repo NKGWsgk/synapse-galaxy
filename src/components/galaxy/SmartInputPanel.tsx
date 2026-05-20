@@ -441,44 +441,41 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
         </p>
       ) : null}
 
-      <div className="mb-0.5 flex items-center gap-1">
-        <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5">
-          <label htmlFor="synapse-source-url" className="text-[11px] font-medium text-zinc-600">
+      <motion.div layout className="grid gap-3 sm:grid-cols-2 sm:gap-1.5">
+        <div className="min-w-0 space-y-0.5">
+          <label htmlFor="synapse-source-url" className="block text-[11px] font-medium text-zinc-600">
             出発作品
           </label>
-          <label htmlFor="synapse-target-url" className="text-[11px] font-medium text-zinc-600">
-            着地作品
-          </label>
+          <WorkEndpointField
+            id="synapse-source-url"
+            value={sourceUrl}
+            onChange={setSourceUrl}
+            error={sourceUrlError}
+            onTyping={clearFormMessage}
+          />
+          {sourceUrl.trim() && !sourceUrlError ? (
+            <OgpPreviewCard url={sourceUrl} label="出発作品" />
+          ) : null}
         </div>
-        <AllowedUrlHint />
-      </div>
-      <motion.div layout className="grid gap-1.5 sm:grid-cols-2">
-        <WorkEndpointField
-          id="synapse-source-url"
-          value={sourceUrl}
-          onChange={setSourceUrl}
-          error={sourceUrlError}
-          onTyping={clearFormMessage}
-        />
-        <WorkEndpointField
-          id="synapse-target-url"
-          value={targetUrl}
-          onChange={setTargetUrl}
-          error={targetUrlError}
-          onTyping={clearFormMessage}
-        />
+        <div className="min-w-0 space-y-0.5">
+          <div className="flex items-center gap-1">
+            <label htmlFor="synapse-target-url" className="text-[11px] font-medium text-zinc-600">
+              着地作品
+            </label>
+            <AllowedUrlHint />
+          </div>
+          <WorkEndpointField
+            id="synapse-target-url"
+            value={targetUrl}
+            onChange={setTargetUrl}
+            error={targetUrlError}
+            onTyping={clearFormMessage}
+          />
+          {targetUrl.trim() && !targetUrlError ? (
+            <OgpPreviewCard url={targetUrl} label="着地作品" />
+          ) : null}
+        </div>
       </motion.div>
-
-      {(sourceUrl.trim() && !sourceUrlError) || (targetUrl.trim() && !targetUrlError) ? (
-        <motion.div layout className="grid gap-1.5 sm:grid-cols-2">
-          <div className="min-w-0">
-            {sourceUrl.trim() && !sourceUrlError ? <OgpPreviewCard url={sourceUrl} label="出発作品" /> : null}
-          </div>
-          <div className="min-w-0">
-            {targetUrl.trim() && !targetUrlError ? <OgpPreviewCard url={targetUrl} label="着地作品" /> : null}
-          </div>
-        </motion.div>
-      ) : null}
 
       <div>
         <label className="block text-[11px] font-medium text-zinc-600">
