@@ -46,6 +46,26 @@ const BADGE: Record<
     className: "bg-[#1CE783] text-zinc-900",
     glyph: "H",
   },
+  unext: {
+    name: "U-NEXT",
+    className: "bg-[#0099FF] text-white",
+    glyph: "U",
+  },
+  spotify: {
+    name: "Spotify",
+    className: "bg-[#1DB954] text-white",
+    glyph: "S",
+  },
+  apple_music: {
+    name: "Apple Music",
+    className: "bg-[#FA243C] text-white",
+    glyph: "A",
+  },
+  youtube_music: {
+    name: "YouTube Music",
+    className: "bg-[#FF0000] text-white",
+    glyph: "M",
+  },
 };
 
 export function ContentPlatformMark({
