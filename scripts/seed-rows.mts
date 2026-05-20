@@ -2,7 +2,8 @@
  * 10名の人格・日本語シナプス（実在URL）。
  * サンプルデータのURLルール:
  *   - 本 → amazon.co.jp の商品（/dp/…）
- *   - 動画 → Netflix / YouTube / Amazon Prime Video / Disney+ のみ
+ *   - 動画 → Netflix / YouTube / Amazon Prime Video / Disney+ / Hulu / U-NEXT
+ *   - 音楽 → Spotify / Apple Music / YouTube Music
  * keywords は seed-sample-data.mts で Gemini により充填。
  */
 
@@ -20,7 +21,10 @@ const NF = (titleId: string) => `https://www.netflix.com/jp/title/${titleId}`;
 const PRIME_VIDEO_HOME = "https://www.amazon.co.jp/gp/video/storefront";
 /** Disney+（トップ／作品ページは地域差があるためホームをサンプル基準に） */
 const DISNEY_PLUS_HOME = "https://www.disneyplus.com/ja-jp/home";
-
+/** U-NEXT（トップ／作品ページはアカウント・地域で差があるためホームをサンプル基準に） */
+const UNEXT_HOME = "https://video.unext.jp/";
+/** Spotify（アルバム） */
+const SPOTIFY_ALBUM = (id: string) => `https://open.spotify.com/album/${id}`;
 /**
  * ペルソナ概要
  *
@@ -227,9 +231,23 @@ export const SEED_ROWS: SeedRow[] = [
   {
     author: "七海ロク",
     source_url: "https://www.amazon.co.jp/dp/4883922189",
-    target_url: PRIME_VIDEO_HOME,
+    target_url: UNEXT_HOME,
     description:
-      "ライブ映像でグルーヴのズレを観測してから読み返すと、譜面にない情報がどこから来たか説明しやすくなる。映像はメトロノームの外側を教えてくれる。",
+      "ジャズのライブ音源を U-NEXT で観たあとで読み返すと、譜面にない「ズレ」がどこから来たか説明しやすくなる。配信はメトロノームの外側を教えてくれる。",
+  },
+  {
+    author: "七海ロク",
+    source_url: "https://www.amazon.co.jp/dp/4883922189",
+    target_url: SPOTIFY_ALBUM("1weenld61qoidwYuZ1GESA"),
+    description:
+      "Kind of Blue を Spotify で聴きながら即興論を読むと、モードの切り替えが「理論」ではなく耳のリズムになる。アルバム全体が一つの即興セッションに聞こえる。",
+  },
+  {
+    author: "七海ロク",
+    source_url: "https://www.amazon.co.jp/dp/4883922189",
+    target_url: "https://music.apple.com/jp/album/kind-of-blue/268443092",
+    description:
+      "同じ曲を Apple Music でループしながら読むと、拍の前後に置かれたベースの位置が身体に残る。ストリーミングの音質差より「どこで聴くか」が記憶を変える。",
   },
 
   // ── 相馬一平（哲学・言語） ─────────────────────────────────────────────

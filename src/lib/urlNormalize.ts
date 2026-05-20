@@ -1,4 +1,5 @@
-import { isAmazonUrl, stripAmazonAffiliate } from "@/lib/amazon";
+import { isAmazonUrl } from "@/lib/amazon";
+import { stripSynapseAffiliate } from "@/lib/synapseAffiliate";
 
 /** Amazon: /dp/ASIN または /gp/product/ASIN から ASIN を抜く */
 function amazonAsin(url: URL): string | null {
@@ -14,7 +15,7 @@ function amazonAsin(url: URL): string | null {
  * - Amazon: ホスト + ASIN へ畳み込み（アフィリエイト tag は含めない）
  */
 export function normalizeSynapseEndpoint(raw: string): string {
-  const cleaned = stripAmazonAffiliate(raw.trim());
+  const cleaned = stripSynapseAffiliate(raw.trim());
   try {
     const u = new URL(cleaned);
     if (!isAmazonUrl(cleaned)) {

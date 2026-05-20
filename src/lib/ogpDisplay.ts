@@ -31,6 +31,7 @@ function streamingHostnameFlags(pageUrl: string): {
   disney: boolean;
   hulu: boolean;
   primeVideo: boolean;
+  unext: boolean;
 } {
   try {
     const h = new URL(pageUrl).hostname.toLowerCase();
@@ -39,9 +40,10 @@ function streamingHostnameFlags(pageUrl: string): {
       disney: h.includes("disneyplus.com"),
       hulu: h.includes("hulu.com") || h.includes("hulu.jp"),
       primeVideo: h.includes("primevideo.com") || (h.includes("amazon.") && pageUrl.includes("/gp/video")),
+      unext: h === "video.unext.jp" || h.endsWith(".video.unext.jp"),
     };
   } catch {
-    return { netflix: false, disney: false, hulu: false, primeVideo: false };
+    return { netflix: false, disney: false, hulu: false, primeVideo: false, unext: false };
   }
 }
 
@@ -50,7 +52,7 @@ function streamingHostnameFlags(pageUrl: string): {
  */
 function stripStreamingCatalogTitle(t: string, pageUrl: string): string {
   let s = normalizeWhitespace(t);
-  const { netflix, disney, hulu, primeVideo } = streamingHostnameFlags(pageUrl);
+  const { netflix, disney, hulu, primeVideo, unext } = streamingHostnameFlags(pageUrl);
 
   if (netflix && s.includes("|")) {
     const parts = s.split(/\s*\|\s*/).map((x) => x.trim()).filter(Boolean);
@@ -76,6 +78,12 @@ function stripStreamingCatalogTitle(t: string, pageUrl: string): string {
       s = parts[0]!;
     }
   }
+  if (unext && s.includes("|")) {
+    const parts = s.split(/\s*\|\s*/).map((x) => x.trim()).filter(Boolean);
+    if (parts.length >= 2 && /u-?next|ユーネクスト/i.test(parts.slice(1).join(" "))) {
+      s = parts[0]!;
+    }
+  }
 
   if (netflix) {
     s = s.replace(/\s*を観\s*る\s*$/u, "").replace(/\s*を見\s*る\s*$/u, "").trim();
@@ -84,6 +92,9 @@ function stripStreamingCatalogTitle(t: string, pageUrl: string): string {
     s = s.replace(/\s*を観\s*る\s*$/u, "").replace(/\s*を見\s*る\s*$/u, "").trim();
   }
   if (hulu) {
+    s = s.replace(/\s*を観\s*る\s*$/u, "").replace(/\s*を見\s*る\s*$/u, "").trim();
+  }
+  if (unext) {
     s = s.replace(/\s*を観\s*る\s*$/u, "").replace(/\s*を見\s*る\s*$/u, "").trim();
   }
 
@@ -163,7 +174,12 @@ export function isWeakContentTitleLabel(label: string, pageUrl: string): boolean
         h.includes("youtube.") ||
         h.includes("netflix.") ||
         h.includes("disneyplus.") ||
-        h.includes("hulu.")
+        h.includes("hulu.") ||
+        h === "video.unext.jp" ||
+        h.endsWith(".video.unext.jp") ||
+        h.includes("open.spotify.com") ||
+        h.includes("music.apple.com") ||
+        h.includes("music.youtube.com")
       ) {
         return true;
       }
@@ -172,7 +188,17 @@ export function isWeakContentTitleLabel(label: string, pageUrl: string): boolean
     }
   }
   if (/^amazon\.co\.jp$/i.test(label) || /^amazon\.com$/i.test(label)) return true;
-  if (label === "YouTube" || label === "Netflix" || label === "Hulu") return true;
+  if (
+    label === "YouTube" ||
+    label === "Netflix" ||
+    label === "Hulu" ||
+    label === "U-NEXT" ||
+    label === "Spotify" ||
+    label === "Apple Music" ||
+    label === "YouTube Music"
+  ) {
+    return true;
+  }
   return false;
 }
 

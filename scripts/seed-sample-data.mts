@@ -2,7 +2,7 @@
 /**
  * Supabase にシードを投入。各 description から Gemini で keywords を抽出。
  *
- * サンプル URL ルール（scripts/seed-rows.mts）: 本=Amazon /dp/、動画=Netflix・YouTube・Prime Video・Disney+ のみ。
+ * サンプル URL ルール（scripts/seed-rows.mts）: 本=Amazon /dp/、動画=Netflix・YouTube・Prime Video・Disney+・Hulu・U-NEXT、音楽=Spotify・Apple Music・YouTube Music。
  *
  * 事前: supabase/migrations を適用済みであること。
  * 環境変数: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY
@@ -19,11 +19,10 @@ dotenv.config({ path: ".env.local" });
 dotenv.config();
 import type { BatchItem } from "../src/lib/gemini/keywords";
 import geminiKeywords from "../src/lib/gemini/keywords";
-import amazon from "../src/lib/amazon";
+import { withSynapseAffiliate } from "../src/lib/synapseAffiliate.ts";
 import { buildSeedRows } from "./seed-rows.mts";
 
 const { extractKeywordsBatch } = geminiKeywords;
-const { withAmazonAffiliate } = amazon;
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
@@ -170,8 +169,8 @@ async function main() {
 
   const inserts = baseRows.map((row, index) => ({
     user_id: null as string | null,
-    source_url: withAmazonAffiliate(row.source_url),
-    target_url: withAmazonAffiliate(row.target_url),
+    source_url: withSynapseAffiliate(row.source_url),
+    target_url: withSynapseAffiliate(row.target_url),
     description: row.description,
     keywords: keywordMap.get(index) ?? fallbackKeywords(row.description),
   }));

@@ -28,16 +28,42 @@ type OgpPreview = {
   siteName: string | null;
 };
 
+type SearchResult = {
+  url: string;
+  title: string | null;
+  imageUrl: string | null;
+  siteName: string | null;
+};
+
 const ogpPreviewCache = new Map<string, OgpPreview>();
 
 function isValidUrl(s: string): boolean {
   try { new URL(s); return true; } catch { return false; }
 }
 
+function isLikelyUrl(q: string): boolean {
+  try {
+    new URL(q);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function endpointFieldError(value: string): string | null {
+  const err = synapseUrlFieldError(value);
+  if (!err) return null;
+  const trimmed = value.trim();
+  if (trimmed && !isLikelyUrl(trimmed)) {
+    return "候補から作品を選ぶか、URLを入力してください";
+  }
+  return err;
+}
+
 function validateSynapseEndpointUrls(source: string, target: string): string | null {
-  const srcErr = synapseUrlFieldError(source);
+  const srcErr = endpointFieldError(source);
   if (srcErr) return `出発作品: ${srcErr}`;
-  const tgtErr = synapseUrlFieldError(target);
+  const tgtErr = endpointFieldError(target);
   if (tgtErr) return `着地作品: ${tgtErr}`;
   return null;
 }
@@ -58,7 +84,7 @@ function AllowedUrlHint() {
     <span className="group relative inline-flex shrink-0 align-middle">
       <button
         type="button"
-        aria-label="登録できる作品URLについて"
+        aria-label="作品の入力方法について"
         className="inline-flex h-3.5 w-3.5 items-center justify-center text-zinc-400 transition hover:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-100"
       >
         <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
@@ -71,8 +97,134 @@ function AllowedUrlHint() {
         className="pointer-events-none absolute bottom-[calc(100%+4px)] right-0 z-30 w-52 rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-left text-[10px] leading-snug text-zinc-600 opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 sm:w-56"
       >
         {ALLOWED_SYNAPSE_URL_MESSAGE}
+        <span className="mt-1 block text-zinc-500">登録済み作品はタイトルでも検索できます。</span>
       </span>
     </span>
+  );
+}
+
+function WorkEndpointField({
+  id,
+  value,
+  onChange,
+  error,
+  onTyping,
+}: {
+  id: string;
+  value: string;
+  onChange: (next: string) => void;
+  error: string | null;
+  onTyping?: () => void;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const q = value.trim();
+    if (!q || isLikelyUrl(q)) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
+
+    let cancelled = false;
+    const t = window.setTimeout(async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const j = (await res.json()) as { results: SearchResult[] };
+        if (cancelled) return;
+        setResults(j.results);
+        setOpen(true);
+      } catch {
+        if (!cancelled) setResults([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [value]);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  function pickResult(url: string) {
+    onChange(url);
+    setOpen(false);
+    setResults([]);
+  }
+
+  const trimmed = value.trim();
+  const showDropdown = open && trimmed.length > 0 && !isLikelyUrl(trimmed);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <input
+        id={id}
+        className={[
+          "w-full rounded-lg border bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:outline-none focus:ring-2",
+          error
+            ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
+            : "border-zinc-200 focus:border-indigo-300 focus:ring-indigo-100",
+        ].join(" ")}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          onTyping?.();
+        }}
+        onFocus={() => {
+          if (trimmed && !isLikelyUrl(trimmed)) setOpen(true);
+        }}
+        placeholder="URL または 登録済み作品名…"
+        required
+        autoComplete="off"
+      />
+      {loading ? (
+        <div className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin rounded-full border-2 border-indigo-300 border-t-transparent" />
+      ) : null}
+      {showDropdown ? (
+        <div className="absolute left-0 top-full z-50 mt-1 w-full overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl">
+          {loading ? (
+            <p className="px-3 py-2.5 text-center text-[11px] text-zinc-400">検索中…</p>
+          ) : results.length > 0 ? (
+            results.map((r) => (
+              <button
+                key={r.url}
+                type="button"
+                onClick={() => pickResult(r.url)}
+                className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition hover:bg-zinc-50"
+              >
+                {r.imageUrl ? (
+                  <img src={r.imageUrl} alt="" className="h-8 w-8 shrink-0 rounded-md object-cover" loading="lazy" />
+                ) : (
+                  <div className="h-8 w-8 shrink-0 rounded-md bg-zinc-100" />
+                )}
+                <div className="min-w-0 flex-1">
+                  {r.siteName ? <p className="text-[10px] font-medium text-indigo-600">{r.siteName}</p> : null}
+                  <p className="truncate text-xs font-semibold text-zinc-900">{r.title ?? r.url}</p>
+                </div>
+              </button>
+            ))
+          ) : (
+            <p className="px-3 py-2.5 text-center text-[11px] text-zinc-400">
+              「{trimmed}」に一致する作品が見つかりません
+            </p>
+          )}
+        </div>
+      ) : null}
+      {error ? <PlatformUrlAlert message={error} /> : null}
+    </div>
   );
 }
 
@@ -219,9 +371,13 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
     return () => window.clearTimeout(t);
   }, [sourceUrl, targetUrl, title, description, draftUserId]);
 
-  const sourceUrlError = synapseUrlFieldError(sourceUrl);
-  const targetUrlError = synapseUrlFieldError(targetUrl);
+  const sourceUrlError = endpointFieldError(sourceUrl);
+  const targetUrlError = endpointFieldError(targetUrl);
   const hasUrlError = Boolean(sourceUrlError || targetUrlError);
+
+  function clearFormMessage() {
+    if (message && !message.includes("！")) setMessage(null);
+  }
 
   function handleSubmitClick(e: FormEvent) {
     e.preventDefault();
@@ -297,44 +453,20 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
         <AllowedUrlHint />
       </div>
       <motion.div layout className="grid gap-1.5 sm:grid-cols-2">
-        <div>
-          <input
-            id="synapse-source-url"
-            className={[
-              "w-full rounded-lg border bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:outline-none focus:ring-2",
-              sourceUrlError
-                ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
-                : "border-zinc-200 focus:border-indigo-300 focus:ring-indigo-100",
-            ].join(" ")}
-            value={sourceUrl}
-            onChange={(e) => {
-              setSourceUrl(e.target.value);
-              if (message && !message.includes("！")) setMessage(null);
-            }}
-            placeholder="Amazon / Netflix / Hulu…"
-            required
-          />
-          {sourceUrlError ? <PlatformUrlAlert message={sourceUrlError} /> : null}
-        </div>
-        <div>
-          <input
-            id="synapse-target-url"
-            className={[
-              "w-full rounded-lg border bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:outline-none focus:ring-2",
-              targetUrlError
-                ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
-                : "border-zinc-200 focus:border-indigo-300 focus:ring-indigo-100",
-            ].join(" ")}
-            value={targetUrl}
-            onChange={(e) => {
-              setTargetUrl(e.target.value);
-              if (message && !message.includes("！")) setMessage(null);
-            }}
-            placeholder="Amazon / Netflix / Hulu…"
-            required
-          />
-          {targetUrlError ? <PlatformUrlAlert message={targetUrlError} /> : null}
-        </div>
+        <WorkEndpointField
+          id="synapse-source-url"
+          value={sourceUrl}
+          onChange={setSourceUrl}
+          error={sourceUrlError}
+          onTyping={clearFormMessage}
+        />
+        <WorkEndpointField
+          id="synapse-target-url"
+          value={targetUrl}
+          onChange={setTargetUrl}
+          error={targetUrlError}
+          onTyping={clearFormMessage}
+        />
       </motion.div>
 
       {(sourceUrl.trim() && !sourceUrlError) || (targetUrl.trim() && !targetUrlError) ? (

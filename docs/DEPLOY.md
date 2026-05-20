@@ -58,6 +58,10 @@ git push -u origin main
 | `GEMINI_API_KEY` | Gemini API key |
 | `NEXT_PUBLIC_AMAZON_AFFILIATE_TAG` | `nkgw07-22`（または任意） |
 | `AMAZON_AFFILIATE_TAG` | 同上 |
+| `NEXT_PUBLIC_UNEXT_AFFILIATE_CID` | U-NEXT ASP の `cid`（任意） |
+| `UNEXT_AFFILIATE_CID` | 同上 |
+| `NEXT_PUBLIC_UNEXT_AFFILIATE_UTM_SOURCE` | 任意（例: ASP 名） |
+| `UNEXT_AFFILIATE_UTM_SOURCE` | 同上 |
 
 `.env.local` の値をそのままコピペ。
 

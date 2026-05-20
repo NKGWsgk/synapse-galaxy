@@ -5,9 +5,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import * as d3 from "d3-force";
 
 import { isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
-import { getEdgeKeywordRenderPlan } from "@/lib/edgeKeywordDisplay";
-import { jaKeywordSoftBreakHints } from "@/lib/jaKeywordLineBreak";
+import { getEdgeKeywordPillLines } from "@/lib/edgeKeywordDisplay";
 import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
+import { EdgeKeywordInnerText } from "@/components/galaxy/EdgeKeywordInnerText";
 import {
   contentPlatformDisplayName,
   detectContentPlatform,
@@ -440,14 +440,16 @@ function GraphCard({
 
 // ── Edge label (midpoint pill) ───────────────────────────────────────────────
 
-/** ラベル枠の横幅上限 */
+/** ラベル枠の横幅上限（これを超える場合はフォントを縮小） */
 const EDGE_LABEL_MAX_W = 220;
 
+/** 11px 前後・太字の日本語混じりで1グリフあたりの推定幅（fontSize 比）。7 は実測より狭くはみ出すことが多い */
+const EDGE_LABEL_GLYPH_EM = 1.08;
+const EDGE_LABEL_FONT_MIN = 7.75;
+const EDGE_LABEL_FONT_BASE = 10;
+
 function edgeKeywordDisplayLines(keyword: string): string[] {
-  const plan = getEdgeKeywordRenderPlan(keyword);
-  if (plan.mode === "explicit") return [...plan.lines];
-  const hinted = jaKeywordSoftBreakHints(plan.raw);
-  return hinted.includes("\n") ? hinted.split("\n") : [hinted];
+  return getEdgeKeywordPillLines(keyword);
 }
 
 function EdgeKeywordSvg({
@@ -467,12 +469,21 @@ function EdgeKeywordSvg({
 }) {
   const counterScale = 1 / Math.max(zoom, 0.35);
   const lines = edgeKeywordDisplayLines(keyword);
-  const lineHeight = 13;
-  const fontSize = 11;
-  const padX = 10;
-  const padY = 5;
-  const maxGlyphs = Math.max(...lines.map((l) => [...l.replace(/\u200b/g, "")].length), 1);
-  const w = Math.min(EDGE_LABEL_MAX_W, Math.max(52, maxGlyphs * 7 + padX * 2));
+  const padX = 6;
+  const padY = 4;
+  const cleanLines = lines.map((l) => l.replace(/\u200b/g, ""));
+  const maxGlyphs = Math.max(...cleanLines.map((l) => [...l].length), 1);
+
+  const innerBudget = EDGE_LABEL_MAX_W - padX * 2;
+  let fontSize = EDGE_LABEL_FONT_BASE;
+  if (maxGlyphs * fontSize * EDGE_LABEL_GLYPH_EM > innerBudget) {
+    fontSize = Math.max(EDGE_LABEL_FONT_MIN, innerBudget / maxGlyphs / EDGE_LABEL_GLYPH_EM);
+  }
+  const lineHeight = Math.max(11, Math.round(13 * (fontSize / EDGE_LABEL_FONT_BASE)));
+  const w = Math.min(
+    EDGE_LABEL_MAX_W,
+    Math.max(52, Math.ceil(maxGlyphs * fontSize * EDGE_LABEL_GLYPH_EM + padX * 2)),
+  );
   const h = lines.length * lineHeight + padY * 2;
   const peeks = stackedKeywords ?? [];
   const textStartY = -((lines.length - 1) * lineHeight) / 2;
@@ -678,7 +689,11 @@ function RelatedSynapseRow({ synapse, direction, focusNorm, accessToken, onClick
         )}
       </div>
       {firstKeyword ? (
-        <p className="mb-1.5 text-[13px] font-bold leading-snug text-indigo-700">「{firstKeyword}」</p>
+        <p className="mb-1.5 text-[13px] font-bold leading-snug text-indigo-700">
+          「
+          <EdgeKeywordInnerText keyword={firstKeyword} />
+          」
+        </p>
       ) : null}
       <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-zinc-500">{synapse.description.trim() || "—"}</p>
       <div className="mt-2 flex items-center justify-end">
@@ -1863,6 +1878,10 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     const CARD_PAD = 6;
     const cardRects = nodes
       .map((n) => ({ norm: n.norm, cx: n.x, cy: n.y, hw: CARD_W / 2 + CARD_PAD, hh: CARD_H / 2 + CARD_PAD }));
+    /**
+     * キーワード pill のおおよその半幅・半高（world）。大きすぎると辺の中点が常に「重なり」と判定され、
+     * ラベルがシナプス線から大きくズレる。小さすぎるとカードとピクセル的に被ることがある。
+     */
     const LABEL_HW = 70;
     const LABEL_HH = 22;
     const placedLabels: Array<{ x: number; y: number }> = [];

@@ -13,7 +13,8 @@ import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
 import { useAuthFeedback } from "@/components/galaxy/AuthFeedback";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
-import { isAmazonUrl, withAmazonAffiliate } from "@/lib/amazon";
+import { isAmazonUrl } from "@/lib/amazon";
+import { withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { createBrowserClient } from "@/lib/supabase/browser";
 
 type Props = {
@@ -362,8 +363,8 @@ export function ConnectionWorksUrlsStrip({
 }) {
   const displaySrc = normalizeSynapseEndpoint(sourceUrl);
   const displayTgt = normalizeSynapseEndpoint(targetUrl);
-  const hrefSrc = withAmazonAffiliate(displaySrc);
-  const hrefTgt = withAmazonAffiliate(displayTgt);
+  const hrefSrc = withSynapseAffiliate(displaySrc);
+  const hrefTgt = withSynapseAffiliate(displayTgt);
   return (
     <div id="keyword-note-urls" className="space-y-2 border-b border-zinc-100 bg-zinc-50/40 px-4 py-2.5 sm:px-5">
       <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-500">作品URL</p>
@@ -1143,7 +1144,7 @@ function RingKeywordLabels({
             onBlur={() => onHoverChange(null)}
             onClick={(e) => { e.stopPropagation(); onKeywordNoteClick({ keyword: it.label, description: it.description, sourceUrl: it.sourceUrl, targetUrl: it.targetUrl, synapse: it.synapse }); }}
           >
-            <span className="line-clamp-3 break-keep break-words whitespace-pre-line leading-snug">
+            <span className="line-clamp-3 min-w-0 whitespace-pre-line leading-snug">
               <EdgeKeywordInnerText keyword={it.label} />
             </span>
           </button>
@@ -2184,7 +2185,7 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
                   {ogp?.siteName ? <p className="text-[11px] font-medium text-indigo-600">{ogp.siteName}</p> : null}
                   <h2 id="focus-detail-title" className="text-base font-semibold leading-snug text-zinc-900 sm:text-lg">{displayTitle}</h2>
                   <a
-                    href={withAmazonAffiliate(focusUrl)}
+                    href={withSynapseAffiliate(focusUrl)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className={[

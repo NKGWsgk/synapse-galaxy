@@ -9,6 +9,7 @@ export function isVideoStyleOgpPageUrl(url: string): boolean {
     if (h.includes("netflix.com")) return true;
     if (h.includes("disneyplus.com")) return true;
     if (h.includes("hulu.com") || h.includes("hulu.jp")) return true;
+    if (h === "video.unext.jp" || h.endsWith(".video.unext.jp")) return true;
     if (h.includes("primevideo.com")) return true;
     if (h.includes("amazon.") && url.includes("/gp/video")) return true;
     return false;

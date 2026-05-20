@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { amazonAsinFromUrl, isAmazonUrl, stripAmazonAffiliate, withAmazonAffiliate } from "@/lib/amazon";
+import { amazonAsinFromUrl, isAmazonUrl } from "@/lib/amazon";
+import { stripSynapseAffiliate, withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { fetchOgp } from "@/lib/ogp";
 import { createAnonClient, createServiceClient, type ContentMetadataRow } from "@/lib/supabase/clients";
@@ -68,6 +69,18 @@ function needsTitleRefresh(title: string | null | undefined, pageUrl: string): b
     if (host.includes("hulu.com") || host.includes("hulu.jp")) {
       if (tl === "hulu") return true;
     }
+    if (host === "video.unext.jp" || host.endsWith(".video.unext.jp")) {
+      if (tl === "u-next" || tl === "unext" || t === "U-NEXT") return true;
+    }
+    if (host.includes("open.spotify.com")) {
+      if (tl === "spotify") return true;
+    }
+    if (host.includes("music.apple.com")) {
+      if (tl === "apple music") return true;
+    }
+    if (host.includes("music.youtube.com")) {
+      if (tl === "youtube music") return true;
+    }
     if (host.includes("amazon.co.jp") && pageUrl.includes("/gp/video")) {
       if (tl.includes("prime video") && t.length < 24) return true;
     }
@@ -103,7 +116,7 @@ export async function GET(req: Request) {
 
     const supabase = createAnonClient();
     const candidates = Array.from(
-      new Set([normalizedUrl, url, stripAmazonAffiliate(url), withAmazonAffiliate(normalizedUrl)]),
+      new Set([normalizedUrl, url, stripSynapseAffiliate(url), withSynapseAffiliate(normalizedUrl)]),
     );
     let cached: ContentMetadataRow | null = null;
 

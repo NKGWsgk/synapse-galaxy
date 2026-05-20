@@ -26,6 +26,7 @@ npm run dev
 - `src/app/api/synapse/smart-input` — OGP 取得、Amazon `tag` 付与、キーワード抽出、`synapses` / `contents_metadata` 更新
 - `src/components/galaxy/*` — コンパス UI・ベクトルキャンバス・スマートインプット
 - `scripts/seed-sample-data.mts` — シード投入
+- `scripts/backfill-edge-keyword-breaks.mts` — 既存シナプスの接続短題に改行を DB 反映（`GEMINI_EDGE_KEYWORD_BREAK=1` 前提）
 
 ## Peppy との位置関係
 
