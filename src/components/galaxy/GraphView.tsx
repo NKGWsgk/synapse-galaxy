@@ -5,7 +5,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import * as d3 from "d3-force";
 
 import { isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
-import { EdgeKeywordInnerText } from "@/components/galaxy/EdgeKeywordInnerText";
+import { getEdgeKeywordRenderPlan } from "@/lib/edgeKeywordDisplay";
+import { jaKeywordSoftBreakHints } from "@/lib/jaKeywordLineBreak";
 import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
 import {
   contentPlatformDisplayName,
@@ -439,101 +440,102 @@ function GraphCard({
 
 // ── Edge label (midpoint pill) ───────────────────────────────────────────────
 
-/** ラベル枠の横幅（長めにすると単語単位の折り返しが効き、「へ」のみ／カタ単字の孤立が減る） */
+/** ラベル枠の横幅上限 */
 const EDGE_LABEL_MAX_W = 220;
-const EDGE_LABEL_MAX_LINES = 2;
-const EDGE_LABEL_VERTICAL_PAD_TOTAL_PX = 8;
-const EDGE_LABEL_LINE_HEIGHT_APPROX_PX = 14;
-const EDGE_LABEL_BODY_MAX_PX =
-  EDGE_LABEL_VERTICAL_PAD_TOTAL_PX + EDGE_LABEL_MAX_LINES * EDGE_LABEL_LINE_HEIGHT_APPROX_PX;
-const EDGE_LABEL_BODY_MIN_PX = 22;
 
-/** 外枠は block + min-w-0 で flex/絶対配置内でも幅が子に食われない。本文の折り込みは EdgeKeywordInnerText 内で anywhere */
-const EDGE_LABEL_INNER_WRAP_CLS =
-  "box-border block max-w-full min-w-0 w-full whitespace-pre-line rounded-2xl border border-indigo-100 px-1 py-1 text-center text-[11px] font-semibold leading-snug shadow-sm";
-
-function worldToScreen(
-  worldX: number,
-  worldY: number,
-  centerX: number,
-  centerY: number,
-  pan: { x: number; y: number },
-  zoom: number,
-) {
-  return {
-    x: centerX + pan.x + worldX * zoom,
-    y: centerY + pan.y + worldY * zoom,
-  };
+function edgeKeywordDisplayLines(keyword: string): string[] {
+  const plan = getEdgeKeywordRenderPlan(keyword);
+  if (plan.mode === "explicit") return [...plan.lines];
+  const hinted = jaKeywordSoftBreakHints(plan.raw);
+  return hinted.includes("\n") ? hinted.split("\n") : [hinted];
 }
 
-function EdgeLabel({
-  worldX,
-  worldY,
-  screenX,
-  screenY,
+function EdgeKeywordSvg({
+  x,
+  y,
+  zoom,
   keyword,
   stackedKeywords,
-  onClick,
+  onActivate,
 }: {
-  worldX: number;
-  worldY: number;
-  screenX: number;
-  screenY: number;
+  x: number;
+  y: number;
+  zoom: number;
   keyword: string;
   stackedKeywords?: string[];
-  onClick: (e: React.MouseEvent) => void;
+  onActivate: () => void;
 }) {
+  const counterScale = 1 / Math.max(zoom, 0.35);
+  const lines = edgeKeywordDisplayLines(keyword);
+  const lineHeight = 13;
+  const fontSize = 11;
+  const padX = 10;
+  const padY = 5;
+  const maxGlyphs = Math.max(...lines.map((l) => [...l.replace(/\u200b/g, "")].length), 1);
+  const w = Math.min(EDGE_LABEL_MAX_W, Math.max(52, maxGlyphs * 7 + padX * 2));
+  const h = lines.length * lineHeight + padY * 2;
   const peeks = stackedKeywords ?? [];
+  const textStartY = -((lines.length - 1) * lineHeight) / 2;
 
   return (
-    <div
-      data-edge-keyword-label
-      data-world-x={worldX}
-      data-world-y={worldY}
-      style={{
-        position: "absolute",
-        left: screenX,
-        top: screenY,
-        width: EDGE_LABEL_MAX_W,
-        transform: "translate3d(-50%, -50%, 0)",
-        WebkitTransform: "translate3d(-50%, -50%, 0)",
-        zIndex: 30,
-        pointerEvents: "auto",
-        WebkitTapHighlightColor: "transparent",
+    <g
+      data-edge-keyword-svg
+      transform={`translate(${x}, ${y}) scale(${counterScale})`}
+      pointerEvents="all"
+      style={{ cursor: "pointer" }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onActivate();
       }}
     >
       {peeks.map((_, idx) => {
         const depth = idx + 1;
         return (
-          <div
+          <rect
             key={idx}
             aria-hidden
-            className="pointer-events-none absolute rounded-2xl border border-indigo-100 bg-white px-1 py-1 text-center text-[10px] font-semibold leading-snug text-indigo-400 shadow-sm"
-            style={{
-              width: "100%",
-              top: `calc(50% - ${depth * 4}px)`,
-              left: `${depth * 4}px`,
-              right: `${depth * 4}px`,
-              transform: "translateY(-50%)",
-              opacity: 0.6 - depth * 0.15,
-              zIndex: 0,
-              height: "1.8em",
-              overflow: "hidden",
-            }}
+            x={-w / 2 + depth * 3}
+            y={-h / 2 - depth * 3}
+            width={w}
+            height={h}
+            rx={12}
+            ry={12}
+            fill="white"
+            stroke="#e0e7ff"
+            strokeWidth={1}
+            opacity={0.55 - depth * 0.12}
           />
         );
       })}
-      <button
-        type="button"
-        lang="ja"
-        onClick={onClick}
-        onPointerDown={(e) => e.stopPropagation()}
-        className={`relative z-10 w-full bg-white text-indigo-700 shadow-md ring-1 ring-indigo-200 ${EDGE_LABEL_INNER_WRAP_CLS}`}
-        title={peeks.length > 0 ? `${keyword} (他${peeks.length}件)` : keyword}
+      <rect
+        x={-w / 2}
+        y={-h / 2}
+        width={w}
+        height={h}
+        rx={12}
+        ry={12}
+        fill="#ffffff"
+        stroke="#c7d2fe"
+        strokeWidth={1}
+      />
+      <text
+        x={0}
+        y={textStartY}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fontSize={fontSize}
+        fill="#4338ca"
+        fontWeight={600}
+        fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
       >
-        <EdgeKeywordInnerText keyword={keyword} />
-      </button>
-    </div>
+        {lines.map((line, i) => (
+          <tspan key={i} x={0} dy={i === 0 ? 0 : lineHeight}>
+            {line}
+          </tspan>
+        ))}
+      </text>
+    </g>
   );
 }
 
@@ -716,7 +718,6 @@ function PosterLink({ userId }: { userId: string }) {
 export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentLayerRef = useRef<HTMLDivElement>(null);
-  const labelsOverlayRef = useRef<HTMLDivElement>(null);
   const viewportCenterRef = useRef({ cx: 0, cy: 0 });
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
 
@@ -735,20 +736,6 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   const cameraRafRef = useRef<number | null>(null);
   const pendingCameraRef = useRef<{ p: { x: number; y: number }; z: number } | null>(null);
 
-  const syncLabelPositions = useCallback((p: { x: number; y: number }, z: number) => {
-    const overlay = labelsOverlayRef.current;
-    if (!overlay) return;
-    const { cx, cy } = viewportCenterRef.current;
-    for (const node of overlay.querySelectorAll("[data-edge-keyword-label]")) {
-      const el = node as HTMLElement;
-      const wx = Number(el.dataset.worldX);
-      const wy = Number(el.dataset.worldY);
-      if (!Number.isFinite(wx) || !Number.isFinite(wy)) continue;
-      el.style.left = `${cx + p.x + wx * z}px`;
-      el.style.top = `${cy + p.y + wy * z}px`;
-    }
-  }, []);
-
   const applyCameraDom = useCallback((p: { x: number; y: number }, z: number) => {
     panRef.current = p;
     zoomRef.current = z;
@@ -757,8 +744,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       el.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) scale(${z})`;
       el.style.willChange = gesturingRef.current ? "transform" : "auto";
     }
-    syncLabelPositions(p, z);
-  }, [syncLabelPositions]);
+  }, []);
 
   const scheduleCameraDom = useCallback((p: { x: number; y: number }, z: number) => {
     pendingCameraRef.current = { p, z };
@@ -1372,24 +1358,6 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     if (wheelTimerRef.current) window.clearTimeout(wheelTimerRef.current);
   }, [applyCameraDom]);
 
-  // iOS: ネイティブスクロール/ピンチ競合を抑止
-  useEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-    const blockTouch = (e: TouchEvent) => {
-      if (pointersRef.current.size > 0) e.preventDefault();
-    };
-    const blockGesture = (e: Event) => e.preventDefault();
-    el.addEventListener("touchmove", blockTouch, { passive: false });
-    el.addEventListener("gesturestart", blockGesture);
-    el.addEventListener("gesturechange", blockGesture);
-    return () => {
-      el.removeEventListener("touchmove", blockTouch);
-      el.removeEventListener("gesturestart", blockGesture);
-      el.removeEventListener("gesturechange", blockGesture);
-    };
-  }, []);
-
   const viewportLocalFromClient = useCallback((clientX: number, clientY: number) => {
     const rect = viewportRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
@@ -1419,11 +1387,145 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     });
   }, []);
 
+  const touchActiveRef = useRef(false);
+
+  const applyPinchZoom = useCallback((midClientX: number, midClientY: number, dist: number) => {
+    const pinch = pinchRef.current;
+    const cxw = viewportCenterRef.current.cx;
+    const cyw = viewportCenterRef.current.cy;
+    if (!pinch || dist < 1 || cxw <= 0) return;
+    const local = viewportLocalFromClient(midClientX, midClientY);
+    const z1 = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinch.zoom0 * (dist / pinch.dist0)));
+    const worldX = (local.x - pinch.pan0.x - cxw) / pinch.zoom0;
+    const worldY = (local.y - pinch.pan0.y - cyw) / pinch.zoom0;
+    scheduleCameraDom(
+      { x: local.x - cxw - worldX * z1, y: local.y - cyw - worldY * z1 },
+      z1,
+    );
+  }, [scheduleCameraDom, viewportLocalFromClient]);
+
+  // iOS: Touch Events で 2 本指ピンチ（Pointer Events + capture では取れないことが多い）
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const isTouchBlockedTarget = (target: EventTarget | null) => {
+      const t = target as HTMLElement | null;
+      if (!t?.closest) return false;
+      return !!(
+        t.closest("[data-graph-zoom-toolbar]")
+        || t.closest("[data-edge-keyword-svg]")
+        || t.closest("[data-graph-node]")
+      );
+    };
+
+    const initPinchFromTouches = (touches: TouchList) => {
+      if (touches.length < 2) return;
+      const dist = Math.hypot(
+        touches[1].clientX - touches[0].clientX,
+        touches[1].clientY - touches[0].clientY,
+      );
+      bgDragRef.current = null;
+      if (dist > 8) {
+        pinchRef.current = {
+          dist0: dist,
+          zoom0: zoomRef.current,
+          pan0: { ...panRef.current },
+        };
+      }
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length >= 2) {
+        e.preventDefault();
+        touchActiveRef.current = true;
+        gesturingRef.current = true;
+        cameraAnimTokenRef.current += 1;
+        initPinchFromTouches(e.touches);
+        return;
+      }
+      if (e.touches.length !== 1 || isTouchBlockedTarget(e.target)) return;
+      e.preventDefault();
+      touchActiveRef.current = true;
+      gesturingRef.current = true;
+      cameraAnimTokenRef.current += 1;
+      pinchRef.current = null;
+      const t = e.touches[0];
+      bgDragRef.current = {
+        startX: t.clientX,
+        startY: t.clientY,
+        panX: panRef.current.x,
+        panY: panRef.current.y,
+      };
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!touchActiveRef.current) return;
+      e.preventDefault();
+      if (e.touches.length >= 2) {
+        if (!pinchRef.current) initPinchFromTouches(e.touches);
+        const dist = Math.hypot(
+          e.touches[1].clientX - e.touches[0].clientX,
+          e.touches[1].clientY - e.touches[0].clientY,
+        );
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        applyPinchZoom(midX, midY, dist);
+        return;
+      }
+      const d = bgDragRef.current;
+      if (!d || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      scheduleCameraDom(
+        { x: d.panX + (t.clientX - d.startX), y: d.panY + (t.clientY - d.startY) },
+        zoomRef.current,
+      );
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!touchActiveRef.current) return;
+      if (e.touches.length === 1) {
+        pinchRef.current = null;
+        const t = e.touches[0];
+        bgDragRef.current = {
+          startX: t.clientX,
+          startY: t.clientY,
+          panX: panRef.current.x,
+          panY: panRef.current.y,
+        };
+        return;
+      }
+      if (e.touches.length >= 2) {
+        initPinchFromTouches(e.touches);
+        bgDragRef.current = null;
+        return;
+      }
+      touchActiveRef.current = false;
+      bgDragRef.current = null;
+      pinchRef.current = null;
+      commitCameraState();
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: false });
+    el.addEventListener("touchcancel", onTouchEnd, { passive: false });
+    el.addEventListener("gesturestart", (e) => e.preventDefault());
+    el.addEventListener("gesturechange", (e) => e.preventDefault());
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
+    };
+  }, [applyPinchZoom, commitCameraState, scheduleCameraDom]);
+
   const onBgPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "touch") return;
     if (e.button !== 0) return;
     const t = e.target as HTMLElement | null;
     if (t?.closest("[data-graph-zoom-toolbar]")) return;
-    if (t?.closest("[data-edge-keyword-label]")) return;
+    if (t?.closest("[data-edge-keyword-svg]")) return;
 
     cameraAnimTokenRef.current += 1;
     gesturingRef.current = true;
@@ -1456,20 +1558,10 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointersRef.current.size >= 2) {
-      const pinch = pinchRef.current;
       const dist = pointerDistance();
       const midClient = pointerMidClient();
-      const cxw = viewportCenterRef.current.cx;
-      const cyw = viewportCenterRef.current.cy;
-      if (!pinch || dist < 1 || !midClient || cxw <= 0) return;
-      const local = viewportLocalFromClient(midClient.x, midClient.y);
-      const z1 = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinch.zoom0 * (dist / pinch.dist0)));
-      const worldX = (local.x - pinch.pan0.x - cxw) / pinch.zoom0;
-      const worldY = (local.y - pinch.pan0.y - cyw) / pinch.zoom0;
-      scheduleCameraDom(
-        { x: local.x - cxw - worldX * z1, y: local.y - cyw - worldY * z1 },
-        z1,
-      );
+      if (!midClient) return;
+      applyPinchZoom(midClient.x, midClient.y, dist);
       return;
     }
 
@@ -1479,15 +1571,17 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       { x: d.panX + (e.clientX - d.startX), y: d.panY + (e.clientY - d.startY) },
       zoomRef.current,
     );
-  }, [pointerDistance, pointerMidClient, scheduleCameraDom, viewportLocalFromClient]);
+  }, [pointerDistance, pointerMidClient, applyPinchZoom, scheduleCameraDom]);
 
   const onBgPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "touch") return;
     processPointerMove(e);
   }, [processPointerMove]);
 
   const onBgPointerUpRef = useRef<(e: { pointerId: number; clientX: number; clientY: number; currentTarget?: EventTarget | null }) => void>(() => {});
 
   const onBgPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "touch") return;
     pointersRef.current.delete(e.pointerId);
     try {
       const cap = viewportRef.current ?? (e.currentTarget as HTMLDivElement | null);
@@ -1848,24 +1942,21 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       const synCount = l.synapses.length;
       const lineWidth = Math.min(5, 1.6 + Math.log2(synCount) * 1.4);
       edgeLineElements.push(
-        <g key={i}>
+        <g key={i} pointerEvents="none">
           <line x1={srcEdge.x} y1={srcEdge.y} x2={lineEndX} y2={lineEndY} stroke={stroke} strokeWidth={lineWidth} strokeLinecap="butt" />
           <line x1={lineEndX} y1={lineEndY} x2={tipPt.x} y2={tipPt.y} stroke="transparent" strokeWidth={0.1} markerEnd={`url(#arrow-${l.dominant})`} />
         </g>,
       );
       if (l.keyword) {
-        const screen = worldToScreen(labelX, labelY, centerX, centerY, pan, zoom);
         edgeLabelElements.push(
-          <EdgeLabel
+          <EdgeKeywordSvg
             key={`${l.synapse.id}-${l.keyword}`}
-            worldX={labelX}
-            worldY={labelY}
-            screenX={screen.x}
-            screenY={screen.y}
+            x={labelX}
+            y={labelY}
+            zoom={zoom}
             keyword={l.keyword}
             stackedKeywords={l.stackedKeywords}
-            onClick={(e) => {
-              e.stopPropagation();
+            onActivate={() => {
               setKeywordNote({
                 keyword: l.keyword!,
                 description: l.synapse.description,
@@ -1913,7 +2004,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
             width={4000}
             height={4000}
             viewBox="-2000 -2000 4000 4000"
-            style={{ position: "absolute", left: -2000, top: -2000, overflow: "visible", pointerEvents: "none" }}
+            style={{ position: "absolute", left: -2000, top: -2000, overflow: "visible" }}
           >
             <defs>
               {(Object.keys(DIM_MARKER) as DominantDim[]).map((d) => (
@@ -1932,6 +2023,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
               ))}
             </defs>
             {edgeLineElements}
+            {edgeLabelElements}
           </svg>
 
           {/* Cards */}
@@ -1940,6 +2032,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
             return (
               <div
                 key={n.norm}
+                data-graph-node
                 style={{
                   position: "absolute",
                   left: n.x,
@@ -1960,15 +2053,6 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
               </div>
             );
           })}
-        </div>
-
-        {/* Keyword labels — 画面座標オーバーレイ（transform 内に置くと iOS Safari で消える） */}
-        <div
-          ref={labelsOverlayRef}
-          className="pointer-events-none absolute inset-0 overflow-visible"
-          style={{ zIndex: 25 }}
-        >
-          {edgeLabelElements}
         </div>
 
         {/* Zoom controls — viewport の setPointerCapture から除外（親 onPointerDown より先で止める） */}
