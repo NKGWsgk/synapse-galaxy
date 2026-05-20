@@ -7,7 +7,6 @@ import * as d3 from "d3-force";
 import { isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
 import { getEdgeKeywordPillLines } from "@/lib/edgeKeywordDisplay";
 import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
-import { EdgeKeywordInnerText } from "@/components/galaxy/EdgeKeywordInnerText";
 import {
   contentPlatformDisplayName,
   detectContentPlatform,
@@ -39,11 +38,16 @@ import {
   type DominantDim,
 } from "./FocusCompass";
 
+export type GraphDetailRequest = { url: string; nonce: number };
+
 type Props = {
   focusUrl: string;
   synapses: SynapseRow[];
   workMap: WorkEndpointMap;
   onFocusUrl: (url: string) => void;
+  /** プロフィール一覧など親から作品詳細モーダルを開く */
+  detailRequest?: GraphDetailRequest | null;
+  onDetailRequestHandled?: () => void;
 };
 
 // ── Layout constants ─────────────────────────────────────────────────────────
@@ -107,18 +111,104 @@ function graphViewportFitZoomMultiplier(viewportW: number): number {
   return isNarrowGraphViewport(viewportW) ? 1 : 1.1;
 }
 
-/** スマホ初回: 縦方向に約何枚の作品カードが収まるか */
-const MOBILE_FIT_VISIBLE_WORKS_Y = 3;
-const MOBILE_FIT_CARD_GAP_Y = 36;
+/** スマホ初回: フォーカス＋上下各1作品のコンパクト枠（枚数の目安） */
+const MOBILE_COMPACT_STACK_WORKS = 3;
+const MOBILE_COMPACT_STACK_GAP_Y = 40;
 
 /** スマホで UI 100% 比がこの値以下のとき、キーワードを線の近くに留める */
 const MOBILE_LOW_ZOOM_UI_RATIO = 0.8;
 
-function graphMobileVerticalFitZoom(viewportH: number, pad: number): number {
-  const spanY =
-    MOBILE_FIT_VISIBLE_WORKS_Y * CARD_H +
-    (MOBILE_FIT_VISIBLE_WORKS_Y - 1) * MOBILE_FIT_CARD_GAP_Y;
-  return (viewportH - pad * 2) / spanY;
+function expandBBoxWithCard(
+  x: number,
+  y: number,
+  hx: number,
+  hy: number,
+  box: { minX: number; minY: number; maxX: number; maxY: number },
+): void {
+  if (x - hx < box.minX) box.minX = x - hx;
+  if (y - hy < box.minY) box.minY = y - hy;
+  if (x + hx > box.maxX) box.maxX = x + hx;
+  if (y + hy > box.maxY) box.maxY = y + hy;
+}
+
+/**
+ * 1-hop のうちフォーカスの真上・真下に最も近い作品を各1つ選ぶ。
+ * 横ばかりのときは距離が近い順に上下へ振り分ける。
+ */
+function pickMobileVerticalNeighbors(
+  hubPos: { x: number; y: number },
+  oneHop: Array<{ x: number; y: number }>,
+): { above: { x: number; y: number } | null; below: { x: number; y: number } | null } {
+  const dyThreshold = 12;
+  let above: { x: number; y: number } | null = null;
+  let aboveDy = -Infinity;
+  let below: { x: number; y: number } | null = null;
+  let belowDy = Infinity;
+
+  for (const p of oneHop) {
+    const dy = p.y - hubPos.y;
+    if (dy < -dyThreshold && dy > aboveDy) {
+      above = p;
+      aboveDy = dy;
+    } else if (dy > dyThreshold && dy < belowDy) {
+      below = p;
+      belowDy = dy;
+    }
+  }
+
+  const byDist = [...oneHop].sort(
+    (a, b) =>
+      Math.hypot(a.x - hubPos.x, a.y - hubPos.y) - Math.hypot(b.x - hubPos.x, b.y - hubPos.y),
+  );
+
+  if (!above || !below) {
+    for (const p of byDist) {
+      const dy = p.y - hubPos.y;
+      if (!above && p !== below && dy <= dyThreshold) above = p;
+      else if (!below && p !== above && dy >= -dyThreshold) below = p;
+      if (above && below) break;
+    }
+  }
+  if (!above || !below) {
+    for (const p of byDist) {
+      if (p === above || p === below) continue;
+      if (!above) above = p;
+      else if (!below) below = p;
+      break;
+    }
+  }
+
+  return { above, below };
+}
+
+/** スマホ初回: フォーカス＋上1＋下1 の縦コンパクトフィット（1-hop 全体は必須ではない） */
+function computeMobileCompactFitZoom(
+  hubPos: { x: number; y: number },
+  oneHop: Array<{ x: number; y: number }>,
+  viewportW: number,
+  viewportH: number,
+  pad: number,
+): number {
+  const hx = CARD_W / 2;
+  const hy = CARD_H / 2;
+  const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
+
+  const { above, below } = pickMobileVerticalNeighbors(hubPos, oneHop);
+  if (above) expandBBoxWithCard(above.x, above.y, hx, hy, bbox);
+  if (below) expandBBoxWithCard(below.x, below.y, hx, hy, bbox);
+
+  const slotY = CARD_H + MOBILE_COMPACT_STACK_GAP_Y;
+  if (!above) bbox.minY = Math.min(bbox.minY, hubPos.y - hy - slotY);
+  if (!below) bbox.maxY = Math.max(bbox.maxY, hubPos.y + hy + slotY);
+
+  const minStackH =
+    CARD_H * MOBILE_COMPACT_STACK_WORKS +
+    MOBILE_COMPACT_STACK_GAP_Y * (MOBILE_COMPACT_STACK_WORKS - 1);
+  const bboxH = Math.max(minStackH, bbox.maxY - bbox.minY);
+  const zY = (viewportH - pad * 2) / bboxH;
+  const zX = (viewportW - pad * 2) / (CARD_W * 1.15);
+  return Math.min(zX, zY);
 }
 
 function zoomUiRatio(zoom: number, baselineZoom: number | undefined): number {
@@ -478,13 +568,13 @@ function GraphCard({
     <div
       onPointerDown={onPointerDown}
       className={[
-        "relative flex flex-col overflow-hidden rounded-xl bg-white text-left shadow-[0_3px_12px_rgba(0,0,0,0.08)] transition-transform duration-150 will-change-transform",
+        "relative flex flex-col overflow-visible rounded-xl bg-white text-left shadow-[0_3px_12px_rgba(0,0,0,0.08)] transition-transform duration-150 will-change-transform",
         isFocus ? "ring-2 ring-indigo-400" : "ring-1 ring-zinc-200/70",
         loadingHint ? "" : "hover:scale-[1.04] hover:z-30",
       ].join(" ")}
       style={{ width: CARD_W, height: CARD_H, cursor: "pointer", touchAction: "none" }}
     >
-      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-t-xl">
         <OgpTileMedia
           pageUrl={url}
           imageUrl={showImage ? data!.imageUrl : null}
@@ -493,9 +583,13 @@ function GraphCard({
           onError={() => setImgError(true)}
         />
       </div>
-      <div className="relative flex min-h-[2.875rem] shrink-0 flex-col justify-center px-1.5 py-1">
+      <div className="relative flex min-h-[2.875rem] shrink-0 flex-col justify-center overflow-visible rounded-b-xl bg-white px-1.5 py-1">
         <p
           className="line-clamp-2 w-full overflow-hidden text-center text-[11px] font-medium leading-snug text-zinc-900 break-keep break-words"
+          style={{
+            transform: "scale(calc(1 / max(var(--graph-zoom, 1), 0.35)))",
+            transformOrigin: "top center",
+          }}
           title={displayTitle}
         >
           {displayTitle}
@@ -633,6 +727,11 @@ function EdgeKeywordSvg({
 
 // ── Keyword-note modal helper components ────────────────────────────────────
 
+/** 詳細パネル用: メイン画面の改行・ZWSP ヒントを除いた1行表示 */
+function relatedSynapseKeywordLine(raw: string): string {
+  return raw.normalize("NFC").replace(/\r/g, "").replace(/\n/g, "").replace(/\u200b/g, "");
+}
+
 /** 詳細パネル内の「関連シナプス」リスト行。
  *  出発: 本作 → 相手 / 着地: 相手 → 本作 の3カラム（長題は折り込み）。
  *  キーワード・接続理由・いいねを続けて表示。
@@ -713,14 +812,13 @@ function RelatedSynapseRow({
         )}
       </div>
       {firstKeyword ? (
-        <p className="mb-1.5 text-[13px] font-bold leading-snug text-indigo-700">
-          「
-          <EdgeKeywordInnerText keyword={firstKeyword} />
-          」
+        <p className="mb-1.5 whitespace-nowrap text-[13px] font-bold leading-snug text-indigo-700">
+          「{relatedSynapseKeywordLine(firstKeyword)}」
         </p>
       ) : null}
       <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-zinc-500">{synapse.description.trim() || "—"}</p>
-      <div className="mt-2 flex items-center justify-end">
+      <div className="mt-2 flex items-center justify-between gap-2">
+        {synapse.user_id ? <PosterLink userId={synapse.user_id} /> : <span />}
         <LikeButton synapse={synapse} accessToken={accessToken} />
       </div>
       <span hidden>{otherNorm}{isFocusSrc ? "" : ""}</span>
@@ -754,7 +852,7 @@ function PosterLink({ userId }: { userId: string }) {
 
 // ── Main component ──────────────────────────────────────────────────────────
 
-export function GraphView({ focusUrl, synapses, workMap, onFocusUrl }: Props) {
+export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailRequest, onDetailRequestHandled }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentLayerRef = useRef<HTMLDivElement>(null);
   const viewportCenterRef = useRef({ cx: 0, cy: 0 });
@@ -781,6 +879,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl }: Props) {
     const el = contentLayerRef.current;
     if (el) {
       el.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) scale(${z})`;
+      el.style.setProperty("--graph-zoom", String(z));
       el.style.willChange = gesturingRef.current ? "transform" : "auto";
     }
   }, []);
@@ -1355,28 +1454,38 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl }: Props) {
       targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, stored.zoom));
       targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
     } else {
-      // Establish "100%" scale once from bbox of hub + immediate (N=1) neighbors.
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       const hx = CARD_W / 2;
       const hy = CARD_H / 2;
-      for (const n of builtNodes) {
-        if (!n.isHub && n.hop !== 1) continue;
-        const p = worldPos.get(n.norm);
-        if (!p) continue;
-        if (p.x - hx < minX) minX = p.x - hx;
-        if (p.y - hy < minY) minY = p.y - hy;
-        if (p.x + hx > maxX) maxX = p.x + hx;
-        if (p.y + hy > maxY) maxY = p.y + hy;
-      }
-      if (!isFinite(minX)) return;
-      const bboxW = Math.max(1, maxX - minX);
-      const bboxH = Math.max(1, maxY - minY);
       const PAD = graphViewportFitPadding(viewport.w);
       const narrow = isNarrowGraphViewport(viewport.w);
+
       if (narrow) {
-        const zY3 = graphMobileVerticalFitZoom(viewport.h, PAD);
-        targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zY3 * 1.05));
+        const oneHop: Array<{ x: number; y: number }> = [];
+        for (const n of builtNodes) {
+          if (!n.isHub && n.hop !== 1) continue;
+          const p = worldPos.get(n.norm);
+          if (p) oneHop.push(p);
+        }
+        const zCompact = computeMobileCompactFitZoom(
+          hubPos,
+          oneHop,
+          viewport.w,
+          viewport.h,
+          PAD,
+        );
+        targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zCompact * 1.06));
       } else {
+        const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+        expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
+        for (const n of builtNodes) {
+          if (!n.isHub && n.hop !== 1) continue;
+          const p = worldPos.get(n.norm);
+          if (!p) continue;
+          expandBBoxWithCard(p.x, p.y, hx, hy, bbox);
+        }
+        if (!isFinite(bbox.minX)) return;
+        const bboxW = Math.max(CARD_W, bbox.maxX - bbox.minX);
+        const bboxH = Math.max(CARD_H, bbox.maxY - bbox.minY);
         const zX = (viewport.w - PAD * 2) / bboxW;
         const zY = (viewport.h - PAD * 2) / bboxH;
         targetZoom = Math.max(
@@ -1794,6 +1903,14 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl }: Props) {
     if (!detailOpen) setDetailUrl(focusUrl);
   }, [focusUrl, detailOpen]);
 
+  useEffect(() => {
+    if (!detailRequest) return;
+    const url = endpointDisplayUrl(detailRequest.url, workMap);
+    setDetailUrl(url);
+    setDetailOpen(true);
+    onDetailRequestHandled?.();
+  }, [detailRequest?.nonce, detailRequest, workMap, onDetailRequestHandled]);
+
   // Keyword note modal
   const [keywordNote, setKeywordNote] = useState<{
     keyword: string;
@@ -2098,6 +2215,8 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl }: Props) {
             transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
             transformOrigin: "0 0",
             pointerEvents: "none",
+            // GraphCard タイトルの counterScale（applyCameraDom でも同期）
+            ["--graph-zoom" as string]: zoom,
           }}
         >
           {/* SVG edges — covers a big virtual area */}
