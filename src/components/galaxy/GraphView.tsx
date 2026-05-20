@@ -25,7 +25,6 @@ import {
   OgpTileMedia,
   SynapseConnectionTitles,
   ConnectionWorksLine,
-  ConnectionWorksUrlsStrip,
   ogpMiniCache,
   fetchOgpMiniPayload,
   synapseToDims,
@@ -85,6 +84,26 @@ const CAMERA_FIT_SMOOTH_MS = 520;
 
 /** ツールバー ± は「初期100%」基準で 80/90/100… の 10% 刻み */
 const ZOOM_DISPLAY_STEP_PCT = 10;
+
+/** Tailwind `md` と揃えた狭いビューポート（スマホ）判定 */
+const GRAPH_NARROW_MAX_WIDTH = 768;
+
+function isNarrowGraphViewport(viewportW: number): boolean {
+  return viewportW > 0 && viewportW < GRAPH_NARROW_MAX_WIDTH;
+}
+
+function graphViewportFitPadding(viewportW: number): number {
+  return isNarrowGraphViewport(viewportW) ? 16 : 60;
+}
+
+/** 初回フィット時の倍率。狭い画面は少し寄せてカード／ラベルを大きく見せる */
+function graphViewportFitZoomMultiplier(viewportW: number): number {
+  return isNarrowGraphViewport(viewportW) ? 1.34 : 1.1;
+}
+
+function edgeKeywordCounterScale(zoom: number): number {
+  return 1 / Math.max(zoom, 0.35);
+}
 
 function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
@@ -452,6 +471,35 @@ function edgeKeywordDisplayLines(keyword: string): string[] {
   return getEdgeKeywordPillLines(keyword);
 }
 
+/** キーワード pill のキャンバス座標サイズ（counterScale 適用前） */
+function measureEdgeKeywordPill(keyword: string): { w: number; h: number; fontSize: number; lineHeight: number; lines: string[] } {
+  const lines = edgeKeywordDisplayLines(keyword);
+  const padX = 6;
+  const padY = 4;
+  const cleanLines = lines.map((l) => l.replace(/\u200b/g, ""));
+  const maxGlyphs = Math.max(...cleanLines.map((l) => [...l].length), 1);
+  const innerBudget = EDGE_LABEL_MAX_W - padX * 2;
+  let fontSize = EDGE_LABEL_FONT_BASE;
+  if (maxGlyphs * fontSize * EDGE_LABEL_GLYPH_EM > innerBudget) {
+    fontSize = Math.max(EDGE_LABEL_FONT_MIN, innerBudget / maxGlyphs / EDGE_LABEL_GLYPH_EM);
+  }
+  const lineHeight = Math.max(11, Math.round(13 * (fontSize / EDGE_LABEL_FONT_BASE)));
+  const w = Math.min(
+    EDGE_LABEL_MAX_W,
+    Math.max(52, Math.ceil(maxGlyphs * fontSize * EDGE_LABEL_GLYPH_EM + padX * 2)),
+  );
+  const h = lines.length * lineHeight + padY * 2;
+  return { w, h, fontSize, lineHeight, lines };
+}
+
+/** counterScale 後の世界座標における pill 半幅・半高（重なり回避用） */
+function edgeKeywordWorldHalfExtents(keyword: string, zoom: number, narrow: boolean): { hw: number; hh: number } {
+  const { w, h } = measureEdgeKeywordPill(keyword);
+  const cs = edgeKeywordCounterScale(zoom);
+  const margin = narrow ? 6 : 3;
+  return { hw: (w / 2) * cs + margin, hh: (h / 2) * cs + margin };
+}
+
 function EdgeKeywordSvg({
   x,
   y,
@@ -467,26 +515,10 @@ function EdgeKeywordSvg({
   stackedKeywords?: string[];
   onActivate: () => void;
 }) {
-  const counterScale = 1 / Math.max(zoom, 0.35);
-  const lines = edgeKeywordDisplayLines(keyword);
-  const padX = 6;
-  const padY = 4;
-  const cleanLines = lines.map((l) => l.replace(/\u200b/g, ""));
-  const maxGlyphs = Math.max(...cleanLines.map((l) => [...l].length), 1);
-
-  const innerBudget = EDGE_LABEL_MAX_W - padX * 2;
-  let fontSize = EDGE_LABEL_FONT_BASE;
-  if (maxGlyphs * fontSize * EDGE_LABEL_GLYPH_EM > innerBudget) {
-    fontSize = Math.max(EDGE_LABEL_FONT_MIN, innerBudget / maxGlyphs / EDGE_LABEL_GLYPH_EM);
-  }
-  const lineHeight = Math.max(11, Math.round(13 * (fontSize / EDGE_LABEL_FONT_BASE)));
-  const w = Math.min(
-    EDGE_LABEL_MAX_W,
-    Math.max(52, Math.ceil(maxGlyphs * fontSize * EDGE_LABEL_GLYPH_EM + padX * 2)),
-  );
-  const h = lines.length * lineHeight + padY * 2;
-  const peeks = stackedKeywords ?? [];
+  const counterScale = edgeKeywordCounterScale(zoom);
+  const { w, h, fontSize, lineHeight, lines } = measureEdgeKeywordPill(keyword);
   const textStartY = -((lines.length - 1) * lineHeight) / 2;
+  const peeks = stackedKeywords ?? [];
 
   return (
     <g
@@ -551,70 +583,6 @@ function EdgeKeywordSvg({
 }
 
 // ── Keyword-note modal helper components ────────────────────────────────────
-
-/** 2作品名を framed で表示（バンド背景なし、ラベルなし）。
- *  「シナプス」ラベル付きの ConnectionWorksLine の slim 版。
- *  作品クリックでそのページへ遷移できる（onClickWork コールバック経由）。 */
-function KeywordModalWorksLine({ sourceUrl, targetUrl, focusUrl, onClickWork }: {
-  sourceUrl: string;
-  targetUrl: string;
-  focusUrl: string;
-  onClickWork?: (url: string) => void;
-}) {
-  const [from, setFrom] = useState<string | null>(null);
-  const [to, setTo] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    void Promise.all([
-      fetch(`/api/ogp?url=${encodeURIComponent(sourceUrl)}`).then((r) => r.json()).then((j) => resolveContentDisplayTitle(j.title ?? null, sourceUrl)),
-      fetch(`/api/ogp?url=${encodeURIComponent(targetUrl)}`).then((r) => r.json()).then((j) => resolveContentDisplayTitle(j.title ?? null, targetUrl)),
-    ])
-      .then(([a, b]) => { if (cancelled) return; setFrom(a); setTo(b); setLoading(false); })
-      .catch(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [sourceUrl, targetUrl]);
-
-  // Truncate display titles to a uniform max length so both boxes look balanced.
-  const MAX = 22;
-  const truncate = (s: string) => (s.length > MAX ? s.slice(0, MAX - 1) + "…" : s);
-  const leftRaw = loading ? "取得中…" : (from ?? sourceUrl);
-  const rightRaw = loading ? "取得中…" : (to ?? targetUrl);
-  const left = truncate(leftRaw);
-  const right = truncate(rightRaw);
-  const focusNorm = normalizeSynapseEndpoint(focusUrl);
-  const srcActive = normalizeSynapseEndpoint(sourceUrl) === focusNorm;
-  const tgtActive = normalizeSynapseEndpoint(targetUrl) === focusNorm;
-  // Fixed widths + fixed height + 2-line clamp = balanced boxes regardless of title length.
-  const baseCls = "flex h-12 w-40 items-center justify-center rounded-lg px-2.5 py-1.5 text-center text-[11px] leading-snug ring-1 ring-inset transition";
-  const activeCls = `${baseCls} bg-indigo-50 font-bold text-indigo-700 ring-indigo-200 hover:bg-indigo-100`;
-  const mutedCls  = `${baseCls} bg-white font-medium text-zinc-600 ring-zinc-200 hover:bg-zinc-50 hover:text-indigo-700 hover:ring-indigo-200`;
-  return (
-    <div id="keyword-note-connection" className="shrink-0 border-b border-zinc-100 px-4 py-3 sm:px-5">
-      <div className="flex items-center justify-center gap-3">
-        <button
-          type="button"
-          onClick={() => onClickWork?.(sourceUrl)}
-          className={srcActive ? activeCls : mutedCls}
-          title={leftRaw}
-        >
-          <span className="line-clamp-2 break-words">{left}</span>
-        </button>
-        <span className="shrink-0 text-base font-normal text-zinc-400" aria-hidden>→</span>
-        <button
-          type="button"
-          onClick={() => onClickWork?.(targetUrl)}
-          className={tgtActive ? activeCls : mutedCls}
-          title={rightRaw}
-        >
-          <span className="line-clamp-2 break-words">{right}</span>
-        </button>
-      </div>
-    </div>
-  );
-}
 
 /** 詳細パネル内の「関連シナプス」リスト行。
  *  出発: 本作 → 相手 / 着地: 相手 → 本作 の3カラム（長題は折り込み）。
@@ -1294,10 +1262,23 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     return () => ro.disconnect();
   }, []);
 
+  const wasNarrowViewportRef = useRef<boolean | null>(null);
+
   // Camera tween: first load fits N=1 neighborhood and locks that zoom as UI "100%".
   // When focus moves to another work, keep that zoom and re-center pan (always 100% scale).
   useEffect(() => {
     if (viewport.w === 0 || viewport.h === 0) return;
+    const narrow = isNarrowGraphViewport(viewport.w);
+    if (
+      wasNarrowViewportRef.current !== null &&
+      wasNarrowViewportRef.current !== narrow &&
+      cameraUIBaselineRef.current
+    ) {
+      cameraUIBaselineRef.current = null;
+      setCameraUIBaseline(null);
+    }
+    wasNarrowViewportRef.current = narrow;
+
     const worldPos = worldPositionsRef.current;
     if (worldPos.size === 0) return;
 
@@ -1334,10 +1315,13 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       if (!isFinite(minX)) return;
       const bboxW = Math.max(1, maxX - minX);
       const bboxH = Math.max(1, maxY - minY);
-      const PAD = 60;
+      const PAD = graphViewportFitPadding(viewport.w);
       const zX = (viewport.w - PAD * 2) / bboxW;
       const zY = (viewport.h - PAD * 2) / bboxH;
-      targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(zX, zY) * 1.1));
+      targetZoom = Math.max(
+        ZOOM_MIN,
+        Math.min(ZOOM_MAX, Math.min(zX, zY) * graphViewportFitZoomMultiplier(viewport.w)),
+      );
       targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
       cameraUIBaselineRef.current = { pan: targetPan, zoom: targetZoom };
       setCameraUIBaseline(cameraUIBaselineRef.current);
@@ -1875,25 +1859,24 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   const edgeLineElements: React.ReactNode[] = [];
   const edgeLabelElements: React.ReactNode[] = [];
   {
+    const narrowViewport = isNarrowGraphViewport(viewport.w);
     const CARD_PAD = 6;
     const cardRects = nodes
       .map((n) => ({ norm: n.norm, cx: n.x, cy: n.y, hw: CARD_W / 2 + CARD_PAD, hh: CARD_H / 2 + CARD_PAD }));
-    /**
-     * キーワード pill のおおよその半幅・半高（world）。大きすぎると辺の中点が常に「重なり」と判定され、
-     * ラベルがシナプス線から大きくズレる。小さすぎるとカードとピクセル的に被ることがある。
-     */
-    const LABEL_HW = 70;
-    const LABEL_HH = 22;
-    const placedLabels: Array<{ x: number; y: number }> = [];
-    const overlapsAny = (lx: number, ly: number) => {
+    const placedLabels: Array<{ x: number; y: number; hw: number; hh: number }> = [];
+    const overlapsAny = (lx: number, ly: number, hw: number, hh: number) => {
       for (const c of cardRects) {
-        if (Math.abs(lx - c.cx) < c.hw + LABEL_HW && Math.abs(ly - c.cy) < c.hh + LABEL_HH) return true;
+        if (Math.abs(lx - c.cx) < c.hw + hw && Math.abs(ly - c.cy) < c.hh + hh) return true;
       }
       for (const p of placedLabels) {
-        if (Math.abs(lx - p.x) < LABEL_HW * 2 - 8 && Math.abs(ly - p.y) < LABEL_HH * 2 - 4) return true;
+        if (Math.abs(lx - p.x) < p.hw + hw - 6 && Math.abs(ly - p.y) < p.hh + hh - 4) return true;
       }
       return false;
     };
+    const perpSteps = narrowViewport ? [18, 36, 54, 72, 96, 124, 156] : [28, 56, 84, 112];
+    const alongSteps = narrowViewport ? [20, 40, 64, 88, -20, -40, -64, -88] : [40, -40, 80, -80];
+    const perpAlongSteps = narrowViewport ? [18, -18, 36, -36, 54, -54] : [28, -28, 56, -56];
+    const labelFallbackPerp = narrowViewport ? 168 : 140;
 
     for (let i = 0; i < simLinksRef.current.length; i++) {
       const l = simLinksRef.current[i];
@@ -1924,14 +1907,15 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       let labelX = baseMidX;
       let labelY = baseMidY;
       if (l.keyword) {
+        const { hw: labelHw, hh: labelHh } = edgeKeywordWorldHalfExtents(l.keyword, zoom, narrowViewport);
         const perpX = -uy;
         const perpY = ux;
         const tryOffsets: Array<[number, number]> = [[0, 0]];
-        for (const d of [28, 56, 84, 112]) {
+        for (const d of perpSteps) {
           tryOffsets.push([perpX * d, perpY * d], [-perpX * d, -perpY * d]);
         }
-        for (const along of [40, -40, 80, -80]) {
-          for (const dPerp of [28, -28, 56, -56]) {
+        for (const along of alongSteps) {
+          for (const dPerp of perpAlongSteps) {
             tryOffsets.push([ux * along + perpX * dPerp, uy * along + perpY * dPerp]);
           }
         }
@@ -1941,7 +1925,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
         for (const [ox, oy] of tryOffsets) {
           const cx = baseMidX + ox;
           const cy = baseMidY + oy;
-          if (!overlapsAny(cx, cy)) {
+          if (!overlapsAny(cx, cy, labelHw, labelHh)) {
             bestX = cx;
             bestY = cy;
             placed = true;
@@ -1949,12 +1933,12 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
           }
         }
         if (!placed) {
-          bestX = baseMidX + perpX * 140;
-          bestY = baseMidY + perpY * 140;
+          bestX = baseMidX + perpX * labelFallbackPerp;
+          bestY = baseMidY + perpY * labelFallbackPerp;
         }
         labelX = bestX;
         labelY = bestY;
-        placedLabels.push({ x: labelX, y: labelY });
+        placedLabels.push({ x: labelX, y: labelY, hw: labelHw, hh: labelHh });
       }
 
       const stroke = DIM_STROKE[l.dominant];
@@ -2077,7 +2061,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
         {/* Zoom controls — viewport の setPointerCapture から除外（親 onPointerDown より先で止める） */}
         <div
           data-graph-zoom-toolbar
-          className="pointer-events-auto absolute right-5 top-5 z-[120] flex flex-col items-stretch overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-lg"
+          className="pointer-events-auto absolute right-3 top-3 z-[120] flex flex-col items-stretch overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-lg md:right-5 md:top-5"
           onPointerDown={(e) => e.stopPropagation()}
           onWheel={(e) => e.stopPropagation()}
         >
@@ -2213,12 +2197,15 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
               const bboxH = maxY - minY;
               const cx = (minX + maxX) / 2;
               const cy = (minY + maxY) / 2;
-              const PAD = 60;
               const vp = viewportRef.current?.getBoundingClientRect();
               if (!vp) return;
+              const PAD = graphViewportFitPadding(vp.width);
               const zX = (vp.width - PAD * 2) / Math.max(1, bboxW);
               const zY = (vp.height - PAD * 2) / Math.max(1, bboxH);
-              const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(zX, zY)));
+              const z = Math.max(
+                ZOOM_MIN,
+                Math.min(ZOOM_MAX, Math.min(zX, zY) * graphViewportFitZoomMultiplier(vp.width)),
+              );
               const targetPan = { x: -cx * z, y: -cy * z };
               smoothCameraTo(targetPan, z, CAMERA_FIT_SMOOTH_MS);
             }}
@@ -2384,7 +2371,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
           <motion.div key="keyword-note-overlay" className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
             <button type="button" aria-label="閉じる" className="absolute inset-0 bg-zinc-900/40 backdrop-blur-[2px]" onClick={() => setKeywordNote(null)} />
             <motion.div
-              role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-urls keyword-note-body"
+              role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-body"
               className="relative z-10 flex max-h-[min(85vh,620px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.18)]"
               initial={{ opacity: 0, scale: 0.96, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 10 }}
               transition={{ type: "spring", stiffness: 420, damping: 34 }}
@@ -2394,13 +2381,11 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                 <span id="keyword-note-title" className="sr-only">シナプス詳細</span>
                 <button type="button" onClick={() => setKeywordNote(null)} className="rounded-lg px-2 py-1 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900">閉じる</button>
               </div>
-              <KeywordModalWorksLine
+              <ConnectionWorksLine
                 sourceUrl={keywordNote.sourceUrl}
                 targetUrl={keywordNote.targetUrl}
                 focusUrl={focusUrl}
                 onClickWork={(url) => {
-                  // Close the keyword modal, refocus on the clicked work,
-                  // and open its detail panel (matches the main-canvas click flow).
                   setKeywordNote(null);
                   onFocusUrl(url);
                   window.setTimeout(() => {
@@ -2409,7 +2394,6 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                   }, 180);
                 }}
               />
-              <ConnectionWorksUrlsStrip sourceUrl={keywordNote.sourceUrl} targetUrl={keywordNote.targetUrl} />
               <div id="keyword-note-body" className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
                 <h2 className="text-sm font-semibold leading-snug text-indigo-900 sm:text-base">「{keywordNote.keyword}」</h2>
                 <div className="rounded-xl border border-zinc-100 bg-zinc-50/90 px-3 py-3 sm:px-3.5 sm:py-3.5">

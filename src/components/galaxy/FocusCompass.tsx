@@ -8,7 +8,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import { getOgpImageDisplaySrc, isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
 import { ogpImageLayout } from "@/lib/ogpImagePresentation";
 import { EdgeKeywordInnerText } from "@/components/galaxy/EdgeKeywordInnerText";
-import { CopyLinkButton } from "@/components/galaxy/CopyLinkButton";
 import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
 import { useAuthFeedback } from "@/components/galaxy/AuthFeedback";
 import type { SynapseRow } from "@/lib/supabase/clients";
@@ -315,7 +314,17 @@ export function SynapseConnectionTitles({ synapse, focusNorm }: { synapse: Synap
   );
 }
 
-export function ConnectionWorksLine({ sourceUrl, targetUrl, focusUrl }: { sourceUrl: string; targetUrl: string; focusUrl: string }) {
+export function ConnectionWorksLine({
+  sourceUrl,
+  targetUrl,
+  focusUrl,
+  onClickWork,
+}: {
+  sourceUrl: string;
+  targetUrl: string;
+  focusUrl: string;
+  onClickWork?: (url: string) => void;
+}) {
   const [from, setFrom] = useState<string | null>(null);
   const [to, setTo] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -328,81 +337,43 @@ export function ConnectionWorksLine({ sourceUrl, targetUrl, focusUrl }: { source
     return () => { cancelled = true; };
   }, [sourceUrl, targetUrl]);
 
-  const left = loading ? "取得中…" : (from ?? hostLabel(sourceUrl));
-  const right = loading ? "取得中…" : (to ?? hostLabel(targetUrl));
+  const MAX = 22;
+  const truncate = (s: string) => (s.length > MAX ? s.slice(0, MAX - 1) + "…" : s);
+  const leftRaw = loading ? "取得中…" : (from ?? hostLabel(sourceUrl));
+  const rightRaw = loading ? "取得中…" : (to ?? hostLabel(targetUrl));
+  const left = truncate(leftRaw);
+  const right = truncate(rightRaw);
 
-  // フォーカス中の作品がどちら側かを判定（正規化して比較）
   const focusNorm = normalizeSynapseEndpoint(focusUrl);
-  const srcNorm   = normalizeSynapseEndpoint(sourceUrl);
-  const tgtNorm   = normalizeSynapseEndpoint(targetUrl);
-  const srcActive = srcNorm === focusNorm;
-  const tgtActive = tgtNorm === focusNorm;
+  const srcActive = normalizeSynapseEndpoint(sourceUrl) === focusNorm;
+  const tgtActive = normalizeSynapseEndpoint(targetUrl) === focusNorm;
 
-  const activeCls = "rounded-lg bg-indigo-50 px-2.5 py-1.5 font-bold text-indigo-700 ring-1 ring-inset ring-indigo-200";
-  const mutedCls  = "px-2.5 py-1.5 font-medium text-zinc-500";
+  const baseCls = "flex h-12 w-40 items-center justify-center rounded-lg px-2.5 py-1.5 text-center text-[11px] leading-snug ring-1 ring-inset transition";
+  const activeCls = `${baseCls} bg-indigo-50 font-bold text-indigo-700 ring-indigo-200 hover:bg-indigo-100`;
+  const mutedCls = `${baseCls} bg-white font-medium text-zinc-600 ring-zinc-200 hover:bg-zinc-50 hover:text-indigo-700 hover:ring-indigo-200`;
 
   return (
-    <div id="keyword-note-connection" className="shrink-0 border-b border-zinc-100 bg-zinc-50/60 px-4 py-3 sm:px-5">
-      <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-500">シナプス</p>
-      <p className="flex flex-col items-stretch gap-2 text-sm leading-snug sm:flex-row sm:items-center sm:justify-center sm:gap-3">
-        <span className={`min-w-0 text-center sm:flex-1 sm:text-right ${srcActive ? activeCls : mutedCls}`}>{left}</span>
-        <span className="shrink-0 text-center text-base font-normal text-zinc-400" aria-hidden>→</span>
-        <span className={`min-w-0 text-center sm:flex-1 sm:text-left ${tgtActive ? activeCls : mutedCls}`}>{right}</span>
-      </p>
-    </div>
-  );
-}
-
-/** キーワード／シナプス詳細で、出発・着地作品のページURLを表示（コピー・新規タブ用） */
-export function ConnectionWorksUrlsStrip({
-  sourceUrl,
-  targetUrl,
-}: {
-  sourceUrl: string;
-  targetUrl: string;
-}) {
-  const displaySrc = normalizeSynapseEndpoint(sourceUrl);
-  const displayTgt = normalizeSynapseEndpoint(targetUrl);
-  const hrefSrc = withSynapseAffiliate(displaySrc);
-  const hrefTgt = withSynapseAffiliate(displayTgt);
-  return (
-    <div id="keyword-note-urls" className="space-y-2 border-b border-zinc-100 bg-zinc-50/40 px-4 py-2.5 sm:px-5">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-500">作品URL</p>
-      <div className="flex items-start gap-2">
-        <p className="min-w-0 flex-1 break-all text-[11px] leading-snug">
-          <span className="font-medium text-zinc-500">出発：</span>
-          <a
-            href={hrefSrc}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-indigo-600 underline-offset-2 hover:text-indigo-800 hover:underline"
-          >
-            {displaySrc}
-          </a>
-        </p>
-        <CopyLinkButton
-          textToCopy={displaySrc}
-          idleLabel="コピー"
-          aria-label="出発作品のURLをクリップボードにコピー"
-        />
-      </div>
-      <div className="flex items-start gap-2">
-        <p className="min-w-0 flex-1 break-all text-[11px] leading-snug">
-          <span className="font-medium text-zinc-500">着地：</span>
-          <a
-            href={hrefTgt}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-indigo-600 underline-offset-2 hover:text-indigo-800 hover:underline"
-          >
-            {displayTgt}
-          </a>
-        </p>
-        <CopyLinkButton
-          textToCopy={displayTgt}
-          idleLabel="コピー"
-          aria-label="着地作品のURLをクリップボードにコピー"
-        />
+    <div id="keyword-note-connection" className="shrink-0 border-b border-zinc-100 px-4 py-3 sm:px-5">
+      <div className="flex items-center justify-center gap-3">
+        <button
+          type="button"
+          onClick={() => onClickWork?.(sourceUrl)}
+          disabled={!onClickWork}
+          className={srcActive ? activeCls : mutedCls}
+          title={leftRaw}
+        >
+          <span className="line-clamp-2 break-words">{left}</span>
+        </button>
+        <span className="shrink-0 text-base font-normal text-zinc-400" aria-hidden>→</span>
+        <button
+          type="button"
+          onClick={() => onClickWork?.(targetUrl)}
+          disabled={!onClickWork}
+          className={tgtActive ? activeCls : mutedCls}
+          title={rightRaw}
+        >
+          <span className="line-clamp-2 break-words">{right}</span>
+        </button>
       </div>
     </div>
   );
@@ -2252,7 +2223,7 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
           <motion.div key="keyword-note-overlay" className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
             <button type="button" aria-label="閉じる" className="absolute inset-0 bg-zinc-900/40 backdrop-blur-[2px]" onClick={() => setKeywordNote(null)} />
             <motion.div
-              role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-urls keyword-note-body"
+              role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-body"
               className="relative z-10 flex max-h-[min(85vh,620px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.18)]"
               initial={{ opacity: 0, scale: 0.96, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 10 }}
               transition={{ type: "spring", stiffness: 420, damping: 34 }}
@@ -2262,8 +2233,16 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
                 <span id="keyword-note-title" className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">キーワードの出典</span>
                 <button type="button" onClick={() => setKeywordNote(null)} className="rounded-lg px-2 py-1 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900">閉じる</button>
               </div>
-              <ConnectionWorksLine sourceUrl={keywordNote.sourceUrl} targetUrl={keywordNote.targetUrl} focusUrl={focusUrl} />
-              <ConnectionWorksUrlsStrip sourceUrl={keywordNote.sourceUrl} targetUrl={keywordNote.targetUrl} />
+              <ConnectionWorksLine
+                sourceUrl={keywordNote.sourceUrl}
+                targetUrl={keywordNote.targetUrl}
+                focusUrl={focusUrl}
+                onClickWork={(url) => {
+                  setKeywordNote(null);
+                  onFocusUrl(url);
+                  window.setTimeout(() => setDetailOpen(true), 180);
+                }}
+              />
               <div id="keyword-note-body" className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
                 <h2 className="text-sm font-semibold leading-snug text-indigo-900 sm:text-base">キーワード「{keywordNote.keyword}」</h2>
                 <div className="rounded-xl border border-zinc-100 bg-zinc-50/90 px-3 py-3 sm:px-3.5 sm:py-3.5">
