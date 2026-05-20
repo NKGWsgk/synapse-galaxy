@@ -38,6 +38,7 @@ export type ContentMetadataRow = {
   id: string;
   url: string;
   canonical_id: string;
+  work_fingerprint: string | null;
   purchase_links: Record<string, unknown>;
   title: string | null;
   description: string | null;

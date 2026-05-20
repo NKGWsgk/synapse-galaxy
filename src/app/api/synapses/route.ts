@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAnonClient } from "@/lib/supabase/clients";
+import { buildWorkEndpointMap } from "@/lib/workResolve";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 
 const PAGE_SIZE = 1000;
@@ -43,7 +44,13 @@ export async function GET(req: Request) {
       if (chunk.length < PAGE_SIZE) break;
     }
 
-    return NextResponse.json({ synapses: all });
+    const endpointUrls = all.flatMap((s) => {
+      const row = s as { source_url?: string; target_url?: string };
+      return [row.source_url, row.target_url].filter((u): u is string => typeof u === "string");
+    });
+    const workEndpoints = await buildWorkEndpointMap(supabase, endpointUrls);
+
+    return NextResponse.json({ synapses: all, workEndpoints });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

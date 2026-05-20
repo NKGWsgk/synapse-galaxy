@@ -3,7 +3,9 @@ import { amazonAsinFromUrl, isAmazonUrl } from "@/lib/amazon";
 import { stripSynapseAffiliate, withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { fetchOgp } from "@/lib/ogp";
+import { extractPureWorkTitle } from "@/lib/pureWorkTitle";
 import { createAnonClient, createServiceClient, type ContentMetadataRow } from "@/lib/supabase/clients";
+import { upsertContentMetadata } from "@/lib/workResolve";
 
 /** ISBN-10 → ISBN-13 変換（先頭に"978"を付け、チェックデジットを再計算） */
 function isbn10ToIsbn13(isbn10: string): string {
@@ -33,6 +35,11 @@ function cleanTitleForHost(title: string | null, pageUrl: string): string | null
   }
 
   return t || null;
+}
+
+function pureTitleForResponse(title: string | null | undefined, pageUrl: string): string | null {
+  const t = title ?? null;
+  return extractPureWorkTitle(t, pageUrl) ?? cleanTitleForHost(t, pageUrl);
 }
 
 /** タイトルが商品名・動画名として使えないときはライブ取得で直す（キャッシュに site 名だけ残っているケース） */
@@ -140,7 +147,7 @@ export async function GET(req: Request) {
       !needsTitleRefresh(cached.title, normalizedUrl)
     ) {
       return NextResponse.json({
-        title: cleanTitleForHost(cached.title, normalizedUrl),
+        title: pureTitleForResponse(cached.title, normalizedUrl),
         description: cached.description,
         imageUrl: cached.image_url,
         siteName: cached.site_name,
@@ -181,7 +188,7 @@ export async function GET(req: Request) {
     }
 
     const merged = {
-      title: cleanTitleForHost(og.title ?? cached?.title ?? null, normalizedUrl),
+      title: pureTitleForResponse(og.title ?? cached?.title ?? null, normalizedUrl),
       description:
         og.description && (!cached?.description || og.description.length > cached.description.length)
           ? og.description
@@ -192,17 +199,12 @@ export async function GET(req: Request) {
 
     try {
       const service = createServiceClient();
-      await service.from("contents_metadata").upsert(
-        {
-          url: normalizedUrl,
-          title: merged.title,
-          description: merged.description,
-          image_url: merged.imageUrl,
-          site_name: merged.siteName,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "url" },
-      );
+      await upsertContentMetadata(service, normalizedUrl, {
+        title: merged.title,
+        description: merged.description,
+        imageUrl: merged.imageUrl,
+        siteName: merged.siteName,
+      });
     } catch {
       // noop
     }

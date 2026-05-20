@@ -40,12 +40,14 @@ export async function findCanonicalMatch(
   }
 
   const systemInstruction = `あなたはコンテンツの名寄せ（同一作品判定）エンジンです。
-入力は「新規URLの情報」と「既存候補リスト」です。
+入力は「新規URLの情報」と「既存候補リスト」です。title はプラットフォーム名・出版社レーベル・「を見る」・巻次表記を除いた純粋な作品名です。
 次のルールで JSON のみを返してください。スキーマ: {"matchIndex": number | null, "reason": string}
 - matchIndex は candidates 配列の 0-based index。最も同一性が高いものを 1 つだけ選ぶ
 - 同一作品が無い場合は null
 - "同名だが別作品" の可能性がある場合は無理にマッチさせない（null）
-- URL のドメイン違い（Amazon/楽天/YouTubeレビュー等）は同一性の根拠にも否定にもならない。作品名・著者/監督/型番・シリーズ等を重視する
+- **同一作品**: 上下巻・各巻（1巻2巻）・文庫/単行本/Kindle・別ASIN・別店URL（同一シーズン・同一版）
+- **別作品（必ず null）**: シーズン違い、原作と映画/ドラマ化、総集編/完全版、リメイク・別国版
+- URL のドメイン違いだけでは同一としない。媒体（書籍 vs 映像）とシーズン・版種を最優先する
 `;
 
   const payload = JSON.stringify(

@@ -12,6 +12,7 @@ import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
 import { useAuthFeedback } from "@/components/galaxy/AuthFeedback";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
+import { endpointWorkKey, type WorkEndpointMap } from "@/lib/workEndpoint";
 import { isAmazonUrl } from "@/lib/amazon";
 import { withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { createBrowserClient } from "@/lib/supabase/browser";
@@ -411,12 +412,16 @@ export function synapseToDims(s: SynapseRow): DimProfile | null {
  * = グローバルマップ上のそのノードの「座標」に相当する。
  * 次元データが1件もなければ null。
  */
-export function computeNodeDimProfile(norm: string, synapses: SynapseRow[]): DimProfile | null {
+export function computeNodeDimProfile(
+  key: string,
+  synapses: SynapseRow[],
+  workMap: WorkEndpointMap = {},
+): DimProfile | null {
   const profiles: DimProfile[] = [];
   for (const s of synapses) {
-    const srcN = normalizeSynapseEndpoint(s.source_url);
-    const tgtN = normalizeSynapseEndpoint(s.target_url);
-    if (srcN !== norm && tgtN !== norm) continue;
+    const srcN = endpointWorkKey(s.source_url, workMap);
+    const tgtN = endpointWorkKey(s.target_url, workMap);
+    if (srcN !== key && tgtN !== key) continue;
     const d = synapseToDims(s);
     if (d) profiles.push(d);
   }

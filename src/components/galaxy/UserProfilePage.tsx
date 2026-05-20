@@ -8,6 +8,7 @@ import { CopyLinkButton } from "@/components/galaxy/CopyLinkButton";
 import { SiteFooter } from "@/components/galaxy/SiteFooter";
 import { GraphView } from "./GraphView";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
+import type { WorkEndpointMap } from "@/lib/workResolve";
 
 type Props = {
   userId: string;
@@ -40,6 +41,20 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
     setFocusUrl(normalizeSynapseEndpoint(url));
   }, []);
   const [listOpen, setListOpen] = useState(false);
+  const [workEndpoints, setWorkEndpoints] = useState<WorkEndpointMap>({});
+
+  useEffect(() => {
+    if (synapses.length === 0) {
+      setWorkEndpoints({});
+      return;
+    }
+    void fetch("/api/synapses")
+      .then((r) => r.json())
+      .then((j: { workEndpoints?: WorkEndpointMap }) => {
+        setWorkEndpoints(j.workEndpoints ?? {});
+      })
+      .catch(() => setWorkEndpoints({}));
+  }, [synapses]);
 
   // 自分のページか判定（current user id を取得）
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -216,7 +231,12 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
             </ul>
           </div>
         ) : (
-          <GraphView focusUrl={focusUrl} synapses={synapses} onFocusUrl={handleFocusUrl} />
+          <GraphView
+            focusUrl={focusUrl}
+            synapses={synapses}
+            workMap={workEndpoints}
+            onFocusUrl={handleFocusUrl}
+          />
         )}
       </main>
 

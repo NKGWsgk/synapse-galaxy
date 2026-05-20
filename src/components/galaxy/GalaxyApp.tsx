@@ -10,6 +10,7 @@ import { Header } from "./Header";
 import { NicknameModal } from "./NicknameModal";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
+import type { WorkEndpointMap } from "@/lib/workResolve";
 
 function mostConnectedUrl(synapses: SynapseRow[]): string | null {
   const counts = new Map<string, number>();
@@ -150,6 +151,7 @@ function ViewGate({
 
 export function GalaxyApp() {
   const [synapses, setSynapses] = useState<SynapseRow[]>([]);
+  const [workEndpoints, setWorkEndpoints] = useState<WorkEndpointMap>({});
   const [synapsesLoaded, setSynapsesLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [focusUrl, setFocusUrl] = useState<string | null>(null);
@@ -166,6 +168,7 @@ export function GalaxyApp() {
       if (!res.ok) throw new Error(data.error ?? res.statusText);
       const list = data.synapses as SynapseRow[];
       setSynapses(list);
+      setWorkEndpoints((data.workEndpoints as WorkEndpointMap | undefined) ?? {});
       setLoadError(null);
       setFocusUrl((prev) => prev ?? pickInitialFocusUrl(list));
     } catch (e) {
@@ -288,7 +291,12 @@ export function GalaxyApp() {
               <div key="loading" className="flex h-full items-center justify-center text-sm text-zinc-400">読み込み中…</div>
             ) : focusUrl ? (
               <motion.div key="graph" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="h-full w-full">
-                <GraphView focusUrl={focusUrl} synapses={synapses} onFocusUrl={handleFocusUrl} />
+                <GraphView
+                  focusUrl={focusUrl}
+                  synapses={synapses}
+                  workMap={workEndpoints}
+                  onFocusUrl={handleFocusUrl}
+                />
               </motion.div>
             ) : (
               <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="h-full w-full">

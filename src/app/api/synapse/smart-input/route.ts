@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { ALLOWED_SYNAPSE_URL_MESSAGE, isAllowedSynapseUrl } from "@/lib/contentPlatform";
-import { fetchGraphEndpointNorms, isUrlOnGraph } from "@/lib/graphEndpoints";
+import { fetchGraphEndpointNorms } from "@/lib/graphEndpoints";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
-import { findCanonicalMatch } from "@/lib/gemini/canonicalize";
 import { evaluateSynapseDimensions } from "@/lib/gemini/dimensions";
 import { suggestEdgeKeywordLineBreak } from "@/lib/gemini/edgeKeywordBreak";
 import { fetchOgp } from "@/lib/ogp";
-import { mergePurchaseLinks, purchaseLinksFromUrl } from "@/lib/purchaseLinks";
 import { SYNAPSE_EDGE_REASON_MAX_CHARS, SYNAPSE_EDGE_TITLE_MAX_CHARS } from "@/lib/synapseLimits";
 import { createAuthedAnonClient, createServiceClient } from "@/lib/supabase/clients";
+import { upsertContentMetadata } from "@/lib/workResolve";
 const synapseUrlSchema = z
   .string()
   .url()
@@ -22,152 +21,20 @@ const bodySchema = z.object({
   description: z.string().min(1).max(SYNAPSE_EDGE_REASON_MAX_CHARS),
 });
 
-type ContentMetadataLite = {
-  url: string;
-  canonical_id: string;
-  purchase_links: unknown;
-  title: string | null;
-  description: string | null;
-  image_url: string | null;
-  site_name: string | null;
-  updated_at: string;
-};
-
-function normalizeTitleForSearch(title: string): string {
-  return title
-    .replace(/^【[^】]+】/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/[|｜].*$/g, " ")
-    .replace(/[:：].*$/g, " ")
-    .replace(/[（）()［］\[\]「」『』【】]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function pickSearchNeedle(title: string): string | null {
-  const cleaned = normalizeTitleForSearch(title);
-  if (!cleaned) return null;
-  const parts = cleaned.split(/\s+/g).filter(Boolean);
-  // 日本語タイトルはスペースが無いことが多いので、まずは先頭の塊を優先
-  const best = parts.sort((a, b) => b.length - a.length)[0] ?? cleaned;
-  const needle = best.slice(0, 32).trim();
-  return needle.length >= 2 ? needle : null;
-}
-
-async function unifyPurchaseLinksForCanonicalId(
-  supabase: ReturnType<typeof createServiceClient>,
-  canonicalId: string,
-  delta: Record<string, string>,
-) {
-  if (Object.keys(delta).length === 0) return;
-  const { data: existing } = await supabase
-    .from("contents_metadata")
-    .select("purchase_links")
-    .eq("canonical_id", canonicalId)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const merged = mergePurchaseLinks(existing?.purchase_links, delta);
-  await supabase.from("contents_metadata").update({ purchase_links: merged }).eq("canonical_id", canonicalId);
-}
-
 async function upsertMetadata(url: string, graphNorms: Set<string>) {
   const og = await fetchOgp(url);
   const supabase = createServiceClient();
-
-  const deltaLinks = purchaseLinksFromUrl(url);
-
-  // 既存 URL は canonical_id を固定したままメタだけ更新
-  const { data: existing } = await supabase
-    .from("contents_metadata")
-    .select("url,canonical_id,purchase_links,title,description,image_url,site_name,updated_at")
-    .eq("url", url)
-    .maybeSingle();
-  if (existing) {
-    const ex = existing as unknown as ContentMetadataLite;
-    const mergedLinks = mergePurchaseLinks(ex.purchase_links, deltaLinks);
-    const { data, error } = await supabase
-      .from("contents_metadata")
-      .update({
-        title: og.title,
-        description: og.description,
-        image_url: og.imageUrl,
-        site_name: og.siteName,
-        purchase_links: mergedLinks,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("url", url)
-      .select()
-      .single();
-    if (error) throw new Error(error.message);
-    const row = data as unknown as ContentMetadataLite;
-    await unifyPurchaseLinksForCanonicalId(supabase, row.canonical_id, deltaLinks);
-    return data;
-  }
-
-  // 新規 URL: title で候補を引いて Gemini で同一判定
-  const needle = og.title ? pickSearchNeedle(og.title) : null;
-  let matchedCanonicalId: string | null = null;
-  if (needle) {
-    const { data: candidates } = await supabase
-      .from("contents_metadata")
-      .select("canonical_id,title,url,site_name")
-      .ilike("title", `%${needle}%`)
-      .limit(12);
-
-    const packed =
-      (candidates ?? [])
-        .filter((c) => {
-          const rec = c as unknown as { url?: unknown };
-          return (
-            typeof rec?.url === "string" &&
-            rec.url !== url &&
-            isUrlOnGraph(rec.url, graphNorms)
-          );
-        })
-        .map((c) => {
-          const rec = c as unknown as {
-            canonical_id: string;
-            title: string | null;
-            url: string;
-            site_name: string | null;
-          };
-          return {
-            canonicalId: rec.canonical_id,
-            title: rec.title ?? null,
-            url: rec.url,
-            siteName: rec.site_name ?? null,
-          };
-        }) ?? [];
-
-    const judged = await findCanonicalMatch(
-      { url, title: og.title ?? null, description: og.description ?? null, siteName: og.siteName ?? null },
-      packed,
-    );
-    if (judged.ok) {
-      matchedCanonicalId = judged.matchedCanonicalId;
-    }
-  }
-
-  const insertPayload: Record<string, unknown> = {
+  return upsertContentMetadata(
+    supabase,
     url,
-    title: og.title,
-    description: og.description,
-    image_url: og.imageUrl,
-    site_name: og.siteName,
-    purchase_links: deltaLinks,
-    updated_at: new Date().toISOString(),
-  };
-  if (matchedCanonicalId) {
-    insertPayload.canonical_id = matchedCanonicalId;
-  }
-
-  const { data, error } = await supabase.from("contents_metadata").insert(insertPayload).select().single();
-  if (error) throw new Error(error.message);
-  const row = data as unknown as ContentMetadataLite;
-  await unifyPurchaseLinksForCanonicalId(supabase, row.canonical_id, deltaLinks);
-  return data;
+    {
+      title: og.title,
+      description: og.description,
+      imageUrl: og.imageUrl,
+      siteName: og.siteName,
+    },
+    { graphNorms },
+  );
 }
 
 export async function POST(req: Request) {

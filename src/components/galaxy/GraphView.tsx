@@ -17,6 +17,11 @@ import {
 } from "@/lib/contentPlatform";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
+import {
+  endpointDisplayUrl,
+  endpointWorkKey,
+  type WorkEndpointMap,
+} from "@/lib/workEndpoint";
 import { isAmazonUrl } from "@/lib/amazon";
 import { withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { createBrowserClient } from "@/lib/supabase/browser";
@@ -37,6 +42,7 @@ import {
 type Props = {
   focusUrl: string;
   synapses: SynapseRow[];
+  workMap: WorkEndpointMap;
   onFocusUrl: (url: string) => void;
 };
 
@@ -96,9 +102,53 @@ function graphViewportFitPadding(viewportW: number): number {
   return isNarrowGraphViewport(viewportW) ? 16 : 60;
 }
 
-/** 初回フィット時の倍率。狭い画面は少し寄せてカード／ラベルを大きく見せる */
+/** 初回フィット時の倍率（PC） */
 function graphViewportFitZoomMultiplier(viewportW: number): number {
-  return isNarrowGraphViewport(viewportW) ? 1.34 : 1.1;
+  return isNarrowGraphViewport(viewportW) ? 1 : 1.1;
+}
+
+/** スマホ初回: 縦方向に約何枚の作品カードが収まるか */
+const MOBILE_FIT_VISIBLE_WORKS_Y = 3;
+const MOBILE_FIT_CARD_GAP_Y = 36;
+
+/** スマホで UI 100% 比がこの値以下のとき、キーワードを線の近くに留める */
+const MOBILE_LOW_ZOOM_UI_RATIO = 0.8;
+
+function graphMobileVerticalFitZoom(viewportH: number, pad: number): number {
+  const spanY =
+    MOBILE_FIT_VISIBLE_WORKS_Y * CARD_H +
+    (MOBILE_FIT_VISIBLE_WORKS_Y - 1) * MOBILE_FIT_CARD_GAP_Y;
+  return (viewportH - pad * 2) / spanY;
+}
+
+function zoomUiRatio(zoom: number, baselineZoom: number | undefined): number {
+  if (!baselineZoom || baselineZoom <= 1e-9) return 1;
+  return zoom / baselineZoom;
+}
+
+function isMobileLowZoomUi(zoom: number, baselineZoom: number | undefined, narrow: boolean): boolean {
+  return narrow && zoomUiRatio(zoom, baselineZoom) <= MOBILE_LOW_ZOOM_UI_RATIO;
+}
+
+/** 低ズーム時の重なり判定用ズーム（counterScale 膨張で線から離れすぎるのを防ぐ） */
+function edgeKeywordPlacementZoom(zoom: number, baselineZoom: number | undefined, narrow: boolean): number {
+  if (!isMobileLowZoomUi(zoom, baselineZoom, narrow)) return zoom;
+  return Math.max(zoom, (baselineZoom ?? zoom) * MOBILE_LOW_ZOOM_UI_RATIO);
+}
+
+function clampOffsetFromPoint(
+  mx: number,
+  my: number,
+  x: number,
+  y: number,
+  maxDist: number,
+): { x: number; y: number } {
+  const dx = x - mx;
+  const dy = y - my;
+  const d = Math.hypot(dx, dy);
+  if (d <= maxDist || d < 1e-6) return { x, y };
+  const s = maxDist / d;
+  return { x: mx + dx * s, y: my + dy * s };
 }
 
 function edgeKeywordCounterScale(zoom: number): number {
@@ -215,8 +265,8 @@ function pickEdgeKeyword(s: SynapseRow): string | null {
   return k ? k.trim() : null;
 }
 
-function computeAnchorForNorm(norm: string, synapses: SynapseRow[]): { x: number; y: number } {
-  const p = computeNodeDimProfile(norm, synapses);
+function computeAnchorForKey(key: string, synapses: SynapseRow[], workMap: WorkEndpointMap): { x: number; y: number } {
+  const p = computeNodeDimProfile(key, synapses, workMap);
   if (!p) return { x: 0, y: 0 };
   const xy = nodeGlobalScreenXY(p);
   const mag = Math.hypot(xy.x, xy.y);
@@ -231,64 +281,67 @@ function computeAnchorForNorm(norm: string, synapses: SynapseRow[]): { x: number
 
 type NeighborMap = Map<string, Set<string>>;
 
-/** Build adjacency map keyed by normalized URL */
-function buildNeighborMap(synapses: SynapseRow[]): { neighbors: NeighborMap; urlForNorm: Map<string, string> } {
+/** Build adjacency map keyed by work ID (fallback: normalized URL) */
+function buildNeighborMap(
+  synapses: SynapseRow[],
+  workMap: WorkEndpointMap,
+): { neighbors: NeighborMap; urlForKey: Map<string, string> } {
   const neighbors: NeighborMap = new Map();
-  const urlForNorm = new Map<string, string>();
+  const urlForKey = new Map<string, string>();
   for (const s of synapses) {
-    const sN = normalizeSynapseEndpoint(s.source_url);
-    const tN = normalizeSynapseEndpoint(s.target_url);
-    if (!urlForNorm.has(sN)) urlForNorm.set(sN, normalizeSynapseEndpoint(s.source_url));
-    if (!urlForNorm.has(tN)) urlForNorm.set(tN, normalizeSynapseEndpoint(s.target_url));
-    if (!neighbors.has(sN)) neighbors.set(sN, new Set());
-    if (!neighbors.has(tN)) neighbors.set(tN, new Set());
-    neighbors.get(sN)!.add(tN);
-    neighbors.get(tN)!.add(sN);
+    const sK = endpointWorkKey(s.source_url, workMap);
+    const tK = endpointWorkKey(s.target_url, workMap);
+    if (!urlForKey.has(sK)) urlForKey.set(sK, endpointDisplayUrl(s.source_url, workMap));
+    if (!urlForKey.has(tK)) urlForKey.set(tK, endpointDisplayUrl(s.target_url, workMap));
+    if (!neighbors.has(sK)) neighbors.set(sK, new Set());
+    if (!neighbors.has(tK)) neighbors.set(tK, new Set());
+    neighbors.get(sK)!.add(tK);
+    neighbors.get(tK)!.add(sK);
   }
-  return { neighbors, urlForNorm };
+  return { neighbors, urlForKey };
 }
 
-function buildGraph(focusUrl: string, synapses: SynapseRow[]): { nodes: GraphNode[]; links: GraphLink[] } {
-  const focusNorm = normalizeSynapseEndpoint(focusUrl);
-  const { neighbors, urlForNorm } = buildNeighborMap(synapses);
+function buildGraph(
+  focusUrl: string,
+  synapses: SynapseRow[],
+  workMap: WorkEndpointMap,
+): { nodes: GraphNode[]; links: GraphLink[] } {
+  const focusKey = endpointWorkKey(focusUrl, workMap);
+  const { neighbors, urlForKey } = buildNeighborMap(synapses, workMap);
 
-  // Ensure focus url is in urlForNorm even if not yet in synapses
-  if (!urlForNorm.has(focusNorm)) urlForNorm.set(focusNorm, focusUrl);
+  if (!urlForKey.has(focusKey)) urlForKey.set(focusKey, endpointDisplayUrl(focusUrl, workMap));
 
   const hopMap = new Map<string, 1 | 2>();
-  const oneHop = neighbors.get(focusNorm) ?? new Set<string>();
+  const oneHop = neighbors.get(focusKey) ?? new Set<string>();
   for (const n of oneHop) {
-    if (n === focusNorm) continue;
+    if (n === focusKey) continue;
     hopMap.set(n, 1);
   }
   for (const n1 of oneHop) {
     const further = neighbors.get(n1) ?? new Set<string>();
     for (const n2 of further) {
-      if (n2 === focusNorm) continue;
+      if (n2 === focusKey) continue;
       if (hopMap.has(n2)) continue;
       hopMap.set(n2, 2);
     }
   }
 
-  // Degree, likes count for ranking
-  function degree(norm: string): number {
-    return neighbors.get(norm)?.size ?? 0;
+  function degree(key: string): number {
+    return neighbors.get(key)?.size ?? 0;
   }
-  function likesFor(norm: string): number {
+  function likesFor(key: string): number {
     let v = 0;
     for (const s of synapses) {
-      const sN = normalizeSynapseEndpoint(s.source_url);
-      const tN = normalizeSynapseEndpoint(s.target_url);
-      if (sN === norm || tN === norm) v = Math.max(v, s.likes_count ?? 0);
+      const sK = endpointWorkKey(s.source_url, workMap);
+      const tK = endpointWorkKey(s.target_url, workMap);
+      if (sK === key || tK === key) v = Math.max(v, s.likes_count ?? 0);
     }
     return v;
   }
 
-  // Cap to MAX_NODES total (hub + neighborhood). Drop lowest-priority 2-hop first.
-  let memberNorms: string[] = [focusNorm, ...hopMap.keys()];
-  const totalIncludingHub = memberNorms.length;
+  let memberKeys: string[] = [focusKey, ...hopMap.keys()];
+  const totalIncludingHub = memberKeys.length;
   if (totalIncludingHub > MAX_NODES) {
-    // Separate by hop, sort 2-hop by priority (drop bottom)
     const oneHopArr: string[] = [];
     const twoHopArr: string[] = [];
     for (const [n, h] of hopMap) (h === 1 ? oneHopArr : twoHopArr).push(n);
@@ -301,16 +354,16 @@ function buildGraph(focusUrl: string, synapses: SynapseRow[]): { nodes: GraphNod
     });
     const remainingSlots = MAX_NODES - 1 - oneHopArr.length;
     const keptTwo = remainingSlots > 0 ? twoHopArr.slice(0, remainingSlots) : [];
-    memberNorms = [focusNorm, ...oneHopArr, ...keptTwo];
+    memberKeys = [focusKey, ...oneHopArr, ...keptTwo];
   }
 
-  const memberSet = new Set(memberNorms);
-  const nodes: GraphNode[] = memberNorms.map((norm) => {
-    const isHub = norm === focusNorm;
-    const a = computeAnchorForNorm(norm, synapses);
+  const memberSet = new Set(memberKeys);
+  const nodes: GraphNode[] = memberKeys.map((norm) => {
+    const isHub = norm === focusKey;
+    const a = computeAnchorForKey(norm, synapses, workMap);
     return {
       norm,
-      url: urlForNorm.get(norm) ?? norm,
+      url: urlForKey.get(norm) ?? norm,
       isHub,
       hop: isHub ? 1 : (hopMap.get(norm) ?? 1),
       dimAnchorX: a.x,
@@ -318,17 +371,13 @@ function buildGraph(focusUrl: string, synapses: SynapseRow[]): { nodes: GraphNod
     };
   });
 
-  // Build links for synapses whose both endpoints are members.
-  // Aggregate ALL synapses with the same directed (source, target) pair into
-  // a single GraphLink so the renderer can show stacked keywords and a
-  // thicker line for richer connections.
   const linksByPair = new Map<string, GraphLink>();
   for (const s of synapses) {
-    const sN = normalizeSynapseEndpoint(s.source_url);
-    const tN = normalizeSynapseEndpoint(s.target_url);
-    if (!memberSet.has(sN) || !memberSet.has(tN)) continue;
-    if (sN === tN) continue;
-    const key = `${sN}::${tN}`;
+    const sK = endpointWorkKey(s.source_url, workMap);
+    const tK = endpointWorkKey(s.target_url, workMap);
+    if (!memberSet.has(sK) || !memberSet.has(tK)) continue;
+    if (sK === tK) continue;
+    const key = `${sK}::${tK}`;
     const existing = linksByPair.get(key);
     if (existing) {
       existing.synapses.push(s);
@@ -336,8 +385,8 @@ function buildGraph(focusUrl: string, synapses: SynapseRow[]): { nodes: GraphNod
       const d = synapseToDims(s);
       const dominant: DominantDim = d ? getDominantDim(d) : "balanced";
       linksByPair.set(key, {
-        source: sN,
-        target: tN,
+        source: sK,
+        target: tK,
         synapse: s,
         synapses: [s],
         dominant,
@@ -588,17 +637,24 @@ function EdgeKeywordSvg({
  *  出発: 本作 → 相手 / 着地: 相手 → 本作 の3カラム（長題は折り込み）。
  *  キーワード・接続理由・いいねを続けて表示。
  */
-function RelatedSynapseRow({ synapse, direction, focusNorm, accessToken, onClickOther }: {
+function RelatedSynapseRow({
+  synapse,
+  direction,
+  focusKey,
+  workMap,
+  accessToken,
+  onClickOther,
+}: {
   synapse: SynapseRow;
   direction: "outgoing" | "incoming";
-  focusNorm: string;
+  focusKey: string;
+  workMap: WorkEndpointMap;
   accessToken: string | null;
   onClickOther: (url: string) => void;
 }) {
-  // 「相手」作品 = focus じゃない方
   const otherUrl = direction === "outgoing" ? synapse.target_url : synapse.source_url;
-  const otherNorm = normalizeSynapseEndpoint(otherUrl);
-  const isFocusSrc = normalizeSynapseEndpoint(synapse.source_url) === focusNorm;
+  const otherNorm = endpointWorkKey(otherUrl, workMap);
+  const isFocusSrc = endpointWorkKey(synapse.source_url, workMap) === focusKey;
 
   const [otherTitle, setOtherTitle] = useState<string | null>(null);
   useEffect(() => {
@@ -698,7 +754,7 @@ function PosterLink({ userId }: { userId: string }) {
 
 // ── Main component ──────────────────────────────────────────────────────────
 
-export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
+export function GraphView({ focusUrl, synapses, workMap, onFocusUrl }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentLayerRef = useRef<HTMLDivElement>(null);
   const viewportCenterRef = useRef({ cx: 0, cy: 0 });
@@ -785,8 +841,8 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   // filtering only (which N=2 nodes to render). Positions come from the global
   // world layout in worldPositionsRef.
   const { nodes: builtNodes, links: builtLinks } = useMemo(
-    () => buildGraph(focusUrl, synapses),
-    [focusUrl, synapses],
+    () => buildGraph(focusUrl, synapses, workMap),
+    [focusUrl, synapses, workMap],
   );
 
   // Global world layout — positions for every node in the DB. Computed once
@@ -815,7 +871,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     }
 
     // 1) Collect ALL nodes + ALL links from the entire synapse set.
-    const { neighbors, urlForNorm } = buildNeighborMap(synapses);
+    const { neighbors, urlForKey } = buildNeighborMap(synapses, workMap);
     const allNorms = Array.from(neighbors.keys());
 
     // Pick the algorithmic "starting point" — the node with most direct
@@ -827,11 +883,11 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       let bestLikes = -1;
       const likesByNorm = new Map<string, number>();
       for (const s of synapses) {
-        const sN = normalizeSynapseEndpoint(s.source_url);
-        const tN = normalizeSynapseEndpoint(s.target_url);
+        const sK = endpointWorkKey(s.source_url, workMap);
+        const tK = endpointWorkKey(s.target_url, workMap);
         const l = s.likes_count ?? 0;
-        likesByNorm.set(sN, (likesByNorm.get(sN) ?? 0) + l);
-        likesByNorm.set(tN, (likesByNorm.get(tN) ?? 0) + l);
+        likesByNorm.set(sK, (likesByNorm.get(sK) ?? 0) + l);
+        likesByNorm.set(tK, (likesByNorm.get(tK) ?? 0) + l);
       }
       for (const [norm, set] of neighbors) {
         const deg = set.size;
@@ -905,7 +961,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     // Layout is fully recomputed from synapses every time the data changes — a
     // new work may shift other works to find a globally optimal arrangement.
     const worldNodes: GraphNode[] = allNorms.map((norm) => {
-      const a = computeAnchorForNorm(norm, synapses);
+      const a = computeAnchorForKey(norm, synapses, workMap);
       const { ox, oy } = hashOffset(norm);
       const isStart = norm === startNorm;
       // Pin the start node to world (0,0) — algorithmic anchor.
@@ -913,7 +969,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       const initY = isStart ? 0 : (a.y + oy);
       return {
         norm,
-        url: urlForNorm.get(norm) ?? norm,
+        url: urlForKey.get(norm) ?? norm,
         isHub: false,
         hop: 1,
         dimAnchorX: a.x,
@@ -930,10 +986,10 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     // stacked behind the label.
     const worldLinksByPair = new Map<string, GraphLink>();
     for (const s of synapses) {
-      const sN = normalizeSynapseEndpoint(s.source_url);
-      const tN = normalizeSynapseEndpoint(s.target_url);
-      if (sN === tN) continue;
-      const key = `${sN}::${tN}`;
+      const sK = endpointWorkKey(s.source_url, workMap);
+      const tK = endpointWorkKey(s.target_url, workMap);
+      if (sK === tK) continue;
+      const key = `${sK}::${tK}`;
       const existing = worldLinksByPair.get(key);
       if (existing) {
         existing.synapses.push(s);
@@ -941,8 +997,8 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
         const d = synapseToDims(s);
         const dominant: DominantDim = d ? getDominantDim(d) : "balanced";
         worldLinksByPair.set(key, {
-          source: sN,
-          target: tN,
+          source: sK,
+          target: tK,
           synapse: s,
           synapses: [s],
           dominant,
@@ -1245,7 +1301,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     return () => {
       sim.stop();
     };
-  }, [synapses]);
+  }, [synapses, workMap]);
 
 
   // Measure viewport
@@ -1316,12 +1372,18 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       const bboxW = Math.max(1, maxX - minX);
       const bboxH = Math.max(1, maxY - minY);
       const PAD = graphViewportFitPadding(viewport.w);
-      const zX = (viewport.w - PAD * 2) / bboxW;
-      const zY = (viewport.h - PAD * 2) / bboxH;
-      targetZoom = Math.max(
-        ZOOM_MIN,
-        Math.min(ZOOM_MAX, Math.min(zX, zY) * graphViewportFitZoomMultiplier(viewport.w)),
-      );
+      const narrow = isNarrowGraphViewport(viewport.w);
+      if (narrow) {
+        const zY3 = graphMobileVerticalFitZoom(viewport.h, PAD);
+        targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zY3 * 1.05));
+      } else {
+        const zX = (viewport.w - PAD * 2) / bboxW;
+        const zY = (viewport.h - PAD * 2) / bboxH;
+        targetZoom = Math.max(
+          ZOOM_MIN,
+          Math.min(ZOOM_MAX, Math.min(zX, zY) * graphViewportFitZoomMultiplier(viewport.w)),
+        );
+      }
       targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
       cameraUIBaselineRef.current = { pan: targetPan, zoom: targetZoom };
       setCameraUIBaseline(cameraUIBaselineRef.current);
@@ -1802,15 +1864,15 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   }, []);
 
   // Synapses for the detail panel (incoming + outgoing for detailUrl)
-  const detailFocusNorm = useMemo(() => normalizeSynapseEndpoint(detailUrl), [detailUrl]);
+  const detailFocusKey = useMemo(() => endpointWorkKey(detailUrl, workMap), [detailUrl, workMap]);
   const outgoingSynapses = useMemo(() =>
-    synapses.filter((s) => normalizeSynapseEndpoint(s.source_url) === detailFocusNorm)
+    synapses.filter((s) => endpointWorkKey(s.source_url, workMap) === detailFocusKey)
       .sort((a, b) => a.id.localeCompare(b.id)),
-  [synapses, detailFocusNorm]);
+  [synapses, detailFocusKey, workMap]);
   const incomingSynapses = useMemo(() =>
-    synapses.filter((s) => normalizeSynapseEndpoint(s.target_url) === detailFocusNorm)
+    synapses.filter((s) => endpointWorkKey(s.target_url, workMap) === detailFocusKey)
       .sort((a, b) => a.id.localeCompare(b.id)),
-  [synapses, detailFocusNorm]);
+  [synapses, detailFocusKey, workMap]);
 
   const detailDisplayTitle = resolveContentDisplayTitle(detailOgp?.title ?? null, detailUrl);
 
@@ -1826,7 +1888,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   const simByNorm = new Map<string, GraphNode>();
   for (const n of simNodesRef.current) simByNorm.set(n.norm, n);
 
-  const focusNormForRender = normalizeSynapseEndpoint(focusUrl);
+  const focusKeyForRender = endpointWorkKey(focusUrl, workMap);
   type RenderNode = GraphNode & { x: number; y: number };
   const nodes: RenderNode[] = [];
   const nodePosByNorm = new Map<string, { x: number; y: number }>();
@@ -1847,7 +1909,7 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
     if (sx < -CULL_MARGIN || sx > viewport.w + CULL_MARGIN || sy < -CULL_MARGIN || sy > viewport.h + CULL_MARGIN) {
       continue;
     }
-    const isFocus = wn.norm === focusNormForRender;
+    const isFocus = wn.norm === focusKeyForRender;
     nodes.push({ ...wn, isHub: isFocus, x, y });
     nodePosByNorm.set(wn.norm, { x, y });
   }
@@ -1860,6 +1922,9 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
   const edgeLabelElements: React.ReactNode[] = [];
   {
     const narrowViewport = isNarrowGraphViewport(viewport.w);
+    const baselineZoom = cameraUIBaseline?.zoom;
+    const mobileLowZoom = isMobileLowZoomUi(zoom, baselineZoom, narrowViewport);
+    const placementZoom = edgeKeywordPlacementZoom(zoom, baselineZoom, narrowViewport);
     const CARD_PAD = 6;
     const cardRects = nodes
       .map((n) => ({ norm: n.norm, cx: n.x, cy: n.y, hw: CARD_W / 2 + CARD_PAD, hh: CARD_H / 2 + CARD_PAD }));
@@ -1873,10 +1938,22 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       }
       return false;
     };
-    const perpSteps = narrowViewport ? [18, 36, 54, 72, 96, 124, 156] : [28, 56, 84, 112];
-    const alongSteps = narrowViewport ? [20, 40, 64, 88, -20, -40, -64, -88] : [40, -40, 80, -80];
-    const perpAlongSteps = narrowViewport ? [18, -18, 36, -36, 54, -54] : [28, -28, 56, -56];
-    const labelFallbackPerp = narrowViewport ? 168 : 140;
+    const perpSteps = mobileLowZoom
+      ? [10, 22, 34]
+      : narrowViewport
+        ? [18, 36, 54, 72, 96, 124, 156]
+        : [28, 56, 84, 112];
+    const alongSteps = mobileLowZoom
+      ? [14, -14, 28, -28]
+      : narrowViewport
+        ? [20, 40, 64, 88, -20, -40, -64, -88]
+        : [40, -40, 80, -80];
+    const perpAlongSteps = mobileLowZoom
+      ? [12, -12, 24, -24]
+      : narrowViewport
+        ? [18, -18, 36, -36, 54, -54]
+        : [28, -28, 56, -56];
+    const labelFallbackPerp = mobileLowZoom ? 40 : narrowViewport ? 168 : 140;
 
     for (let i = 0; i < simLinksRef.current.length; i++) {
       const l = simLinksRef.current[i];
@@ -1907,9 +1984,18 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
       let labelX = baseMidX;
       let labelY = baseMidY;
       if (l.keyword) {
-        const { hw: labelHw, hh: labelHh } = edgeKeywordWorldHalfExtents(l.keyword, zoom, narrowViewport);
+        const { hw: labelHw, hh: labelHh } = edgeKeywordWorldHalfExtents(
+          l.keyword,
+          placementZoom,
+          narrowViewport,
+        );
         const perpX = -uy;
         const perpY = ux;
+        const maxLabelOffsetFromMid = mobileLowZoom
+          ? Math.min(48, len * 0.36)
+          : narrowViewport
+            ? 120
+            : 160;
         const tryOffsets: Array<[number, number]> = [[0, 0]];
         for (const d of perpSteps) {
           tryOffsets.push([perpX * d, perpY * d], [-perpX * d, -perpY * d]);
@@ -1933,8 +2019,20 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
           }
         }
         if (!placed) {
-          bestX = baseMidX + perpX * labelFallbackPerp;
-          bestY = baseMidY + perpY * labelFallbackPerp;
+          const fb = mobileLowZoom ? Math.min(labelFallbackPerp, len * 0.28) : labelFallbackPerp;
+          bestX = baseMidX + perpX * fb;
+          bestY = baseMidY + perpY * fb;
+        }
+        if (mobileLowZoom) {
+          const clamped = clampOffsetFromPoint(
+            baseMidX,
+            baseMidY,
+            bestX,
+            bestY,
+            maxLabelOffsetFromMid,
+          );
+          bestX = clamped.x;
+          bestY = clamped.y;
         }
         labelX = bestX;
         labelY = bestY;
@@ -2320,7 +2418,8 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                                 key={s.id}
                                 synapse={s}
                                 direction="outgoing"
-                                focusNorm={detailFocusNorm}
+                                focusKey={detailFocusKey}
+                                workMap={workMap}
                                 accessToken={accessToken}
                                 onClickOther={(url) => {
                                   onFocusUrl(url);
@@ -2341,7 +2440,8 @@ export function GraphView({ focusUrl, synapses, onFocusUrl }: Props) {
                                 key={s.id}
                                 synapse={s}
                                 direction="incoming"
-                                focusNorm={detailFocusNorm}
+                                focusKey={detailFocusKey}
+                                workMap={workMap}
                                 accessToken={accessToken}
                                 onClickOther={(url) => {
                                   onFocusUrl(url);
