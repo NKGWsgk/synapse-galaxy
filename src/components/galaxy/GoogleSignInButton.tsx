@@ -4,7 +4,11 @@ import Script from "next/script";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import { generateGoogleAuthNonce } from "@/lib/googleAuthNonce";
-import { resolveGoogleClientId, signInWithGoogleIdToken } from "@/lib/googleSignIn";
+import {
+  fetchGoogleClientIdFromApi,
+  resolveGoogleClientId,
+  signInWithGoogleIdToken,
+} from "@/lib/googleSignIn";
 
 type CredentialResponse = { credential: string };
 
@@ -59,13 +63,35 @@ export function GoogleSignInButton({
   onSuccess,
   onError,
 }: Props) {
-  const clientId = resolveGoogleClientId(clientIdProp);
+  const [clientId, setClientId] = useState<string | null>(() => resolveGoogleClientId(clientIdProp));
+  const [configLoading, setConfigLoading] = useState(() => !resolveGoogleClientId(clientIdProp));
   const [scriptReady, setScriptReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const nonceRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const fromProps = resolveGoogleClientId(clientIdProp);
+    if (fromProps) {
+      setClientId(fromProps);
+      setConfigLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setConfigLoading(true);
+    void fetchGoogleClientIdFromApi().then((id) => {
+      if (cancelled) return;
+      setClientId(id);
+      setConfigLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clientIdProp]);
 
   const handleCredential = useCallback(async (response: CredentialResponse) => {
     setLoading(true);
@@ -82,7 +108,7 @@ export function GoogleSignInButton({
 
   const mountGoogleButton = useCallback(async () => {
     if (!clientId || !window.google?.accounts?.id || !overlayRef.current || !containerRef.current) {
-      if (!clientId) setInitError("NEXT_PUBLIC_GOOGLE_CLIENT_ID が未設定です");
+      if (!clientId) setInitError("Google Client ID が未設定です");
       return;
     }
 
@@ -115,7 +141,7 @@ export function GoogleSignInButton({
   }, [clientId, handleCredential]);
 
   useEffect(() => {
-    if (!scriptReady) return;
+    if (!scriptReady || !clientId) return;
     void mountGoogleButton();
 
     const container = containerRef.current;
@@ -126,13 +152,28 @@ export function GoogleSignInButton({
     });
     observer.observe(container);
     return () => observer.disconnect();
-  }, [scriptReady, mountGoogleButton]);
+  }, [scriptReady, clientId, mountGoogleButton]);
+
+  if (configLoading) {
+    return (
+      <button type="button" disabled className={visualClassName ?? className}>
+        {loadingLabel}
+      </button>
+    );
+  }
 
   if (!clientId) {
     return (
-      <button type="button" disabled className={visualClassName ?? className}>
-        Googleログイン未設定
-      </button>
+      <div className="space-y-1">
+        <button type="button" disabled className={visualClassName ?? className}>
+          Googleログイン未設定
+        </button>
+        <p className="text-[10px] leading-snug text-red-500">
+          Vercel の Environment Variables に{" "}
+          <code className="rounded bg-red-50 px-0.5">NEXT_PUBLIC_GOOGLE_CLIENT_ID</code>{" "}
+          を設定し、Redeploy してください。
+        </p>
+      </div>
     );
   }
 
