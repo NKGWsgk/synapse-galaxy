@@ -44,6 +44,7 @@ type RankingEntry = {
 };
 
 type Props = {
+  googleClientId?: string | null;
   onFocusUrl: (url: string) => void;
   onUser: (user: User | null) => void;
   user: User | null;
@@ -57,7 +58,7 @@ const SIDEBAR_W_MIN = 240;
 const SIDEBAR_W_MAX = 480;
 const SIDEBAR_W_DEFAULT = 320;
 
-export function Header({ onFocusUrl, onUser, user, onSynapseCreated, mobileOpen, onMobileOpenChange }: Props) {
+export function Header({ googleClientId, onFocusUrl, onUser, user, onSynapseCreated, mobileOpen, onMobileOpenChange }: Props) {
   const { notifySessionExpired } = useAuthFeedback();
   const [sidebarWidth, setSidebarWidth] = useState<number>(SIDEBAR_W_DEFAULT);
   const [resizing, setResizing] = useState(false);
@@ -478,7 +479,7 @@ export function Header({ onFocusUrl, onUser, user, onSynapseCreated, mobileOpen,
       </div>
 
       {/* ログイン / ユーザーアバター */}
-      <AuthPanel onUser={onUser} />
+      <AuthPanel googleClientId={googleClientId} onUser={onUser} />
 
       <SiteFooter className="shrink-0 border-t border-zinc-100 pt-3" onLinkClick={closeMobile} />
     </aside>

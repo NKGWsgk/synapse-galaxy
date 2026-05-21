@@ -1,4 +1,5 @@
 import { GalaxyApp } from "@/components/galaxy/GalaxyApp";
+import { getGoogleClientId } from "@/lib/googleSignIn";
 import { SITE_DESCRIPTION, SITE_NAME_EN, SITE_NAME_JA } from "@/lib/siteMetadata";
 
 export default function Home() {
@@ -10,7 +11,7 @@ export default function Home() {
         </h1>
         <p>{SITE_DESCRIPTION}</p>
       </div>
-      <GalaxyApp />
+      <GalaxyApp googleClientId={getGoogleClientId()} />
     </>
   );
 }

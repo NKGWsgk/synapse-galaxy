@@ -39,6 +39,7 @@ declare global {
 }
 
 type Props = {
+  clientId?: string | null;
   className?: string;
   visualClassName?: string;
   disabled?: boolean;
@@ -49,6 +50,7 @@ type Props = {
 };
 
 export function GoogleSignInButton({
+  clientId: clientIdProp,
   className,
   visualClassName,
   disabled,
@@ -57,7 +59,7 @@ export function GoogleSignInButton({
   onSuccess,
   onError,
 }: Props) {
-  const clientId = getGoogleClientId();
+  const clientId = clientIdProp ?? getGoogleClientId();
   const [scriptReady, setScriptReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);

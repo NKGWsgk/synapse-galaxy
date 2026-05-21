@@ -7,10 +7,11 @@ import type { User } from "@supabase/supabase-js";
 import { GoogleSignInButton } from "./GoogleSignInButton";
 
 type Props = {
+  googleClientId?: string | null;
   onUser?: (user: User | null) => void;
 };
 
-export function AuthPanel({ onUser }: Props) {
+export function AuthPanel({ googleClientId, onUser }: Props) {
   const supabase = useMemo(() => createBrowserClient(), []);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
@@ -66,6 +67,7 @@ export function AuthPanel({ onUser }: Props) {
   return (
     <div className="space-y-2">
       <GoogleSignInButton
+        clientId={googleClientId}
         visualClassName="flex w-full items-center justify-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
         disabled={loading}
         onSuccess={() => setLoading(false)}

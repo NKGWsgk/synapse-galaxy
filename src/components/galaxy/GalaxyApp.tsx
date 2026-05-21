@@ -90,10 +90,12 @@ function EmptyGalaxy({ onOpenPost }: { onOpenPost: () => void }) {
 }
 
 function ViewGate({
+  googleClientId,
   user,
   onOpenPost,
   onDismiss,
 }: {
+  googleClientId?: string | null;
   user: User | null;
   onOpenPost: () => void;
   onDismiss: () => void;
@@ -123,6 +125,7 @@ function ViewGate({
                 もっとシナプスを探索するには<br />Googleアカウントでログインしてください。
               </p>
               <GoogleSignInButton
+                clientId={googleClientId}
                 visualClassName="flex w-full items-center justify-center rounded-full bg-indigo-600 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500"
                 loadingLabel="ログイン中…"
               />
@@ -146,7 +149,7 @@ function ViewGate({
   );
 }
 
-export function GalaxyApp() {
+export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }) {
   const [synapses, setSynapses] = useState<SynapseRow[]>([]);
   const [workEndpoints, setWorkEndpoints] = useState<WorkEndpointMap>({});
   const [synapsesLoaded, setSynapsesLoaded] = useState(false);
@@ -305,6 +308,7 @@ export function GalaxyApp() {
         </header>
 
         <Header
+          googleClientId={googleClientId}
           onFocusUrl={handleFocusUrl}
           onUser={setUser}
           user={user}
@@ -356,6 +360,7 @@ export function GalaxyApp() {
           {gateOpen ? (
             <ViewGate
               key="view-gate"
+              googleClientId={googleClientId}
               user={user}
               onOpenPost={() => {
                 setGateOpen(false);
