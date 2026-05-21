@@ -5,7 +5,7 @@ import { fetchGraphEndpointNorms } from "@/lib/graphEndpoints";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { evaluateSynapseDimensions } from "@/lib/gemini/dimensions";
 import { suggestEdgeKeywordLineBreak } from "@/lib/gemini/edgeKeywordBreak";
-import { fetchOgp } from "@/lib/ogp";
+import { fetchOgpResilient, pureTitleForResponse } from "@/lib/ogpResolve";
 import { SYNAPSE_EDGE_REASON_MAX_CHARS, SYNAPSE_EDGE_TITLE_MAX_CHARS } from "@/lib/synapseLimits";
 import { createAuthedAnonClient, createServiceClient } from "@/lib/supabase/clients";
 import { upsertContentMetadata } from "@/lib/workResolve";
@@ -22,13 +22,13 @@ const bodySchema = z.object({
 });
 
 async function upsertMetadata(url: string, graphNorms: Set<string>) {
-  const og = await fetchOgp(url);
+  const og = await fetchOgpResilient(url);
   const supabase = createServiceClient();
   return upsertContentMetadata(
     supabase,
     url,
     {
-      title: og.title,
+      title: pureTitleForResponse(og.title, url),
       description: og.description,
       imageUrl: og.imageUrl,
       siteName: og.siteName,
