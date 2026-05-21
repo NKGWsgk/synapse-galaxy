@@ -42,24 +42,52 @@ const PAREN_IMPRINT_RE = /[（(][^）)]*(?:文庫|新書|ノヴェルス)[^）)]
 const MEDIA_TYPE_SUFFIX_RE =
   /:\s*(本|Kindleストア|Kindle版|DVD|Blu-ray|ブルーレイ|CD|コミック|コミック\(紙\)|Audible|オーディオブック)\s*$/i;
 
-/** 末尾の視聴アクション（閉じ括弧・引用符の直前でも可） */
+/** 末尾の視聴アクション（Netflix OGP の「を観 る」のように文字間スペースあり） */
 const WATCH_ACTION_SUFFIX_RE =
-  /\s*を(?:観|見|聴|視聴)(?:する|る)?(?:\s*[」』】\])]+)?\s*$/u;
+  /\s*を\s*(?:観|見|聴|視聴)\s*(?:す\s*る|る)?(?:\s*[」』】\])]+)?\s*$/u;
 
-const OUTER_WRAP_RE = /^[\s「『【\[(〈《]+|[\s」』】\])〉》]+$/gu;
+/** 作品名の外枠だけ（【レーベル】は stripPublisherImprints で扱う） */
+const OUTER_WRAP_RE = /^[\s「『\[(〈《]+|[\s」』\])〉》]+$/gu;
 
 /** 巻次・上下巻（末尾のみ。作品名の一部は残す） */
 const VOLUME_SUFFIX_RE =
   /\s*(?:[（(【]\s*)?(?:第\s*[0-9０-９一二三四五六七八九十百千]+\s*)?[上下](?:巻|册|冊)?(?:\s*[）)】])?\s*$/u;
 
+/** 「上 (ハヤカワ文庫SF)」のように巻＋括弧レーベルが続くブロック */
+const VOLUME_PAREN_BLOCK_RE =
+  /\s*(?:第\s*[0-9０-９一二三四五六七八九十百千]+\s*)?[上下](?:巻|册|冊)?\s*[（(][^）)]*[）)]/gu;
+
+const LEADING_BRACKETED_IMPRINT_RE = /^【[^】]+】\s*/u;
+
+/** 〔新版〕（改訂版）など版ラベル（同一作品・表示は作品名のみ） */
+const EDITION_IN_BRACKETS_RE =
+  /[〔【［\[(（][^〕】［\]）)]*(?:新版|改訂版|新装版)[^〕】［\]）)]*[〕】［\]）)]/gu;
+const EDITION_TAIL_RE = /\s*(?:新版|改訂版|新装版)\s*$/u;
+
+function stripEditionMarkers(t: string): string {
+  return normalizeWhitespace(t.replace(EDITION_IN_BRACKETS_RE, " ").replace(EDITION_TAIL_RE, ""));
+}
+
 function stripPublisherImprints(t: string): string {
-  return normalizeWhitespace(
-    t
-      .replace(BRACKETED_IMPRINT_RE, " ")
-      .replace(PAREN_IMPRINT_RE, " ")
-      .replace(PUBLISHER_IMPRINT_RE, " ")
-      .replace(/\s+/g, " "),
-  );
+  let s = t.replace(LEADING_BRACKETED_IMPRINT_RE, "");
+  s = s
+    .replace(BRACKETED_IMPRINT_RE, " ")
+    .replace(PAREN_IMPRINT_RE, " ")
+    .replace(PUBLISHER_IMPRINT_RE, " ");
+  return normalizeWhitespace(s);
+}
+
+function stripVolumeParenBlocks(t: string): string {
+  let s = normalizeWhitespace(t.replace(VOLUME_PAREN_BLOCK_RE, " "));
+  for (let i = 0; i < 4; i++) {
+    const next = s
+      .replace(/\s*[上下](?:巻|册|冊)?\s*[（(][^）)]*$/u, "")
+      .replace(/\s*[（(][^）)]*$/u, "")
+      .trim();
+    if (next === s) break;
+    s = next;
+  }
+  return normalizeWhitespace(s);
 }
 
 function stripPlatformPrefixes(t: string): string {
@@ -133,7 +161,7 @@ function stripStreamingPipeSegments(t: string, pageUrl: string): string {
       ((h === "video.unext.jp" || h.endsWith(".video.unext.jp")) && /u-?next|ユーネクスト/i.test(s));
 
     if (platformTail) {
-      const parts = s.split(/\s*\|\s*/).map((x) => x.trim()).filter(Boolean);
+      const parts = s.split(/\s*[|｜]\s*/).map((x) => x.trim()).filter(Boolean);
       const picked = pickBestContentSegment(parts);
       if (picked) s = picked;
     }
@@ -177,12 +205,14 @@ function stripGlobalSuffixes(t: string): string {
  * - 出版社・レーベル名（ハヤカワ文庫SF 等）を除く
  * - 「を見る」「を観る」等を除く
  * - 末尾の 上/下（巻）を除く
+ * - 〔新版〕 / 改訂版 / 新装版 など版表記を除く
  */
 export function extractPureWorkTitle(title: string | null | undefined, pageUrl: string): string | null {
   const raw = title?.trim();
   if (!raw) return null;
 
   let t = stripOuterWrappers(raw);
+  t = t.replace(LEADING_BRACKETED_IMPRINT_RE, "").replace(/^】+/, "");
   t = stripPlatformPrefixes(t);
 
   if (isAmazonUrl(pageUrl)) {
@@ -191,9 +221,13 @@ export function extractPureWorkTitle(title: string | null | undefined, pageUrl: 
     t = stripStreamingPipeSegments(t, pageUrl);
   }
 
+  t = stripVolumeParenBlocks(t);
   t = stripPublisherImprints(t);
   t = stripGlobalSuffixes(t);
   t = stripPublisherImprints(t);
+  t = stripVolumeParenBlocks(t);
+  t = stripOuterWrappers(t);
+  t = stripEditionMarkers(t);
 
   return t.length >= 1 ? normalizeWhitespace(t) : null;
 }

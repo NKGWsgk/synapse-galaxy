@@ -98,7 +98,7 @@ function normalizeBaseTitleKey(title: string): string {
   return normalizeWhitespace(title)
     .normalize("NFKC")
     .toLowerCase()
-    .replace(/[『』「」【】（）()\[\]［］]/g, "")
+    .replace(/[『』「」【】（）()\[\]［］〔〕]/g, "")
     .replace(/[・･\s]+/g, " ")
     .trim();
 }

@@ -18,7 +18,7 @@ export function isVideoStyleOgpPageUrl(url: string): boolean {
   }
 }
 
-export type OgpImageSlot = "gridMini" | "gridHero" | "modal" | "inlineThumb";
+export type OgpImageSlot = "gridMini" | "gridHero" | "modal" | "inlineThumb" | "feedConnection";
 
 type PortraitClasses = {
   mode: "portrait";
@@ -41,11 +41,14 @@ export function ogpImageLayout(pageUrl: string, slot: OgpImageSlot): PortraitCla
       modal: "relative h-[min(40vh,320px)] w-full shrink-0 overflow-hidden bg-zinc-100",
       inlineThumb:
         "relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100",
+      feedConnection: "relative h-full w-full overflow-hidden bg-zinc-100",
     };
     return {
       mode: "portrait",
       outer: outerBySlot[slot],
-      img: "absolute left-1/2 top-1/2 h-[130%] w-auto max-w-none -translate-x-1/2 -translate-y-1/2 object-cover",
+      img: slot === "feedConnection"
+        ? "absolute inset-0 h-full w-full object-cover object-center"
+        : "absolute left-1/2 top-1/2 h-[130%] w-auto max-w-none -translate-x-1/2 -translate-y-1/2 object-cover",
     };
   }
 
@@ -57,6 +60,7 @@ export function ogpImageLayout(pageUrl: string, slot: OgpImageSlot): PortraitCla
     modal: "relative w-full shrink-0 overflow-hidden bg-zinc-950",
     inlineThumb:
       "relative h-12 w-[4.75rem] shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950",
+    feedConnection: "relative h-full w-full overflow-hidden bg-zinc-950",
   };
 
   const innerBySlot: Record<OgpImageSlot, string> = {
@@ -64,6 +68,7 @@ export function ogpImageLayout(pageUrl: string, slot: OgpImageSlot): PortraitCla
     gridHero: "relative aspect-video w-full max-h-full",
     modal: "relative aspect-video w-full max-h-[min(48vh,400px)] mx-auto",
     inlineThumb: "relative aspect-video h-full w-full",
+    feedConnection: "relative aspect-video h-full w-full",
   };
 
   return {

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { buildSiteMetadata, buildWebsiteJsonLd } from "@/lib/siteMetadata";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,10 +13,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "Synapse Galaxy",
-  description: "8属性でコンテンツを結ぶシナプス型ネットワーク",
-};
+export const metadata: Metadata = buildSiteMetadata();
 
 export const viewport = {
   width: "device-width",
@@ -33,6 +31,10 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full min-h-0 antialiased`}
     >
       <body className="flex h-full min-h-0 min-w-0 flex-col overflow-x-hidden">
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(buildWebsiteJsonLd()) }}
+        />
         {children}
       </body>
     </html>

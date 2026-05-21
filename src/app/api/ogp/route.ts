@@ -146,8 +146,23 @@ export async function GET(req: Request) {
       !needsDescriptionRefresh(cached.description, normalizedUrl) &&
       !needsTitleRefresh(cached.title, normalizedUrl)
     ) {
+      const pureTitle = pureTitleForResponse(cached.title, normalizedUrl);
+      const storedTitle = cached.title?.trim() ?? null;
+      if (pureTitle && storedTitle && pureTitle !== storedTitle) {
+        try {
+          const service = createServiceClient();
+          await upsertContentMetadata(service, normalizedUrl, {
+            title: pureTitle,
+            description: cached.description,
+            imageUrl: cached.image_url,
+            siteName: cached.site_name,
+          });
+        } catch {
+          // noop — 表示は pureTitle で返す
+        }
+      }
       return NextResponse.json({
-        title: pureTitleForResponse(cached.title, normalizedUrl),
+        title: pureTitle,
         description: cached.description,
         imageUrl: cached.image_url,
         siteName: cached.site_name,

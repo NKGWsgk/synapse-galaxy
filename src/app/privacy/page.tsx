@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { LegalLayout, Section } from "@/components/legal/LegalLayout";
 
 export const metadata: Metadata = {
-  title: "プライバシーポリシー | Synapse Galaxy",
+  title: "プライバシーポリシー",
+  description:
+    "シナプスギャラクシー（Synapse Galaxy）のプライバシーポリシー。Googleログイン、投稿データ、OGP取得など個人情報の取り扱いについて説明します。",
 };
 
 export default function PrivacyPage() {

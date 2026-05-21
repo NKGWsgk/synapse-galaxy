@@ -49,7 +49,21 @@ function pickRepresentativeUrl(urls: string[]): string {
   return norms.sort((a, b) => a.length - b.length)[0] ?? urls[0]!;
 }
 
+async function hasWorkFingerprintColumn(): Promise<boolean> {
+  const { error } = await supabase.from("contents_metadata").select("work_fingerprint").limit(1);
+  if (!error) return true;
+  if (/work_fingerprint/i.test(error.message)) return false;
+  throw new Error(error.message);
+}
+
 async function main() {
+  const fingerprintCol = await hasWorkFingerprintColumn();
+  if (!fingerprintCol) {
+    console.warn(
+      "work_fingerprint 列がありません。supabase/migrations/20260520000000_work_fingerprint.sql を適用してください。canonical_id の統合のみ続行します。",
+    );
+  }
+
   const { data: metaRaw, error: metaErr } = await supabase.from("contents_metadata").select("*");
   if (metaErr) throw new Error(metaErr.message);
 
@@ -141,6 +155,13 @@ async function main() {
   }
 
   const finalMeta = [...finalByUrl.values()];
+  const repByNorm = new Map(finalMeta.map((r) => [normalizeSynapseEndpoint(r.url), r.url]));
+  for (const row of rows) {
+    const norm = normalizeSynapseEndpoint(row.url);
+    const rep = repByNorm.get(norm);
+    if (rep && row.url !== rep) deleteUrls.push(row.url);
+  }
+
   console.log(`after merge: metadata ${finalMeta.length}, delete ${deleteUrls.length} rows`);
 
   const synapseUpdates: { id: string; source_url: string; target_url: string }[] = [];
@@ -162,24 +183,27 @@ async function main() {
   if (!APPLY) return;
 
   for (const url of [...new Set(deleteUrls)]) {
-    await supabase.from("contents_metadata").delete().eq("url", url);
+    const { error } = await supabase.from("contents_metadata").delete().eq("url", url);
+    if (error) console.warn(`delete failed: ${url.slice(0, 80)}… ${error.message}`);
   }
 
   for (const row of finalMeta) {
-    const { error } = await supabase.from("contents_metadata").upsert(
-      {
-        url: row.url,
-        canonical_id: row.canonical_id,
-        work_fingerprint: row.work_fingerprint,
-        purchase_links: row.purchase_links,
-        title: row.title,
-        description: row.description,
-        image_url: row.image_url,
-        site_name: row.site_name,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "url" },
-    );
+    const pure = extractPureWorkTitle(row.title, row.url) ?? row.title;
+    row.title = pure;
+    const payload: Record<string, unknown> = {
+      url: row.url,
+      canonical_id: row.canonical_id,
+      purchase_links: row.purchase_links,
+      title: pure,
+      description: row.description,
+      image_url: row.image_url,
+      site_name: row.site_name,
+      updated_at: new Date().toISOString(),
+    };
+    if (fingerprintCol && row.work_fingerprint) {
+      payload.work_fingerprint = row.work_fingerprint;
+    }
+    const { error } = await supabase.from("contents_metadata").upsert(payload, { onConflict: "url" });
     if (error) throw new Error(`upsert ${row.url}: ${error.message}`);
   }
 

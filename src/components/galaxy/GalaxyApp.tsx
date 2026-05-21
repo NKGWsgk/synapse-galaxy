@@ -6,6 +6,7 @@ import type { User } from "@supabase/supabase-js";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { AuthFeedbackProvider } from "./AuthFeedback";
 import { GraphView } from "./GraphView";
+import { ScrollFeedView } from "./ScrollFeedView";
 import { Header } from "./Header";
 import { NicknameModal } from "./NicknameModal";
 import { createBrowserClient } from "@/lib/supabase/browser";
@@ -41,6 +42,9 @@ const GATE_UNLOGGED = 8;
 const GATE_LOGGED = 30;
 const GATE_POST_COUNT = 5;
 const STORAGE_KEY = "sgViewCount";
+const MOBILE_VIEW_KEY = "sgMobileView";
+
+type MobileViewMode = "feed" | "map";
 
 function loadViewCount(): number {
   try { return parseInt(localStorage.getItem(STORAGE_KEY) ?? "0", 10) || 0; }
@@ -48,6 +52,15 @@ function loadViewCount(): number {
 }
 function saveViewCount(n: number) {
   try { localStorage.setItem(STORAGE_KEY, String(n)); } catch { /* noop */ }
+}
+function loadMobileViewMode(): MobileViewMode {
+  try {
+    const v = localStorage.getItem(MOBILE_VIEW_KEY);
+    return v === "map" ? "map" : "feed";
+  } catch { return "feed"; }
+}
+function saveMobileViewMode(mode: MobileViewMode) {
+  try { localStorage.setItem(MOBILE_VIEW_KEY, mode); } catch { /* noop */ }
 }
 
 function EmptyGalaxy({ onOpenPost }: { onOpenPost: () => void }) {
@@ -160,6 +173,7 @@ export function GalaxyApp() {
   const [userPostCount, setUserPostCount] = useState(0);
   const [gateOpen, setGateOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileViewMode, setMobileViewMode] = useState<MobileViewMode>("feed");
 
   const refresh = useCallback(async () => {
     try {
@@ -197,6 +211,15 @@ export function GalaxyApp() {
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { setViewCount(loadViewCount()); }, []);
+  useEffect(() => { setMobileViewMode(loadMobileViewMode()); }, []);
+
+  const toggleMobileViewMode = useCallback(() => {
+    setMobileViewMode((prev) => {
+      const next: MobileViewMode = prev === "feed" ? "map" : "feed";
+      saveMobileViewMode(next);
+      return next;
+    });
+  }, []);
 
   // ?focus=<url> でフォーカス URL を初期化（アフィリエイト tag は URL に載せない）
   useEffect(() => {
@@ -267,7 +290,42 @@ export function GalaxyApp() {
             <span className="text-[7px] font-semibold uppercase tracking-[0.25em] text-indigo-500/80">Synapse</span>
             <span className="text-sm font-semibold text-zinc-900">Galaxy</span>
           </a>
-          <div className="w-9" aria-hidden />
+          <div
+            className="flex shrink-0 rounded-lg border border-zinc-200/90 bg-zinc-100/80 p-0.5"
+            role="group"
+            aria-label="表示モード"
+          >
+            <button
+              type="button"
+              aria-pressed={mobileViewMode === "feed"}
+              onClick={() => {
+                if (mobileViewMode !== "feed") toggleMobileViewMode();
+              }}
+              className={[
+                "rounded-md px-2 py-1 text-[10px] font-semibold transition",
+                mobileViewMode === "feed"
+                  ? "bg-white text-indigo-700 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-700",
+              ].join(" ")}
+            >
+              フィード
+            </button>
+            <button
+              type="button"
+              aria-pressed={mobileViewMode === "map"}
+              onClick={() => {
+                if (mobileViewMode !== "map") toggleMobileViewMode();
+              }}
+              className={[
+                "rounded-md px-2 py-1 text-[10px] font-semibold transition",
+                mobileViewMode === "map"
+                  ? "bg-white text-indigo-700 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-700",
+              ].join(" ")}
+            >
+              マップ
+            </button>
+          </div>
         </header>
 
         <Header
@@ -291,13 +349,23 @@ export function GalaxyApp() {
               <div key="loading" className="flex h-full items-center justify-center text-sm text-zinc-400">読み込み中…</div>
             ) : focusUrl ? (
               <motion.div key="graph" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="h-full w-full">
-                <GraphView
-                  focusUrl={focusUrl}
-                  synapses={synapses}
-                  workMap={workEndpoints}
-                  onFocusUrl={handleFocusUrl}
-                  mobileMenuOpen={mobileNavOpen}
-                />
+                <div className={mobileViewMode === "feed" ? "h-full md:hidden" : "hidden"}>
+                  <ScrollFeedView
+                    focusUrl={focusUrl}
+                    synapses={synapses}
+                    workMap={workEndpoints}
+                    onFocusUrl={handleFocusUrl}
+                  />
+                </div>
+                <div className={mobileViewMode === "map" ? "h-full md:block" : "hidden md:block"}>
+                  <GraphView
+                    focusUrl={focusUrl}
+                    synapses={synapses}
+                    workMap={workEndpoints}
+                    onFocusUrl={handleFocusUrl}
+                    mobileMenuOpen={mobileNavOpen}
+                  />
+                </div>
               </motion.div>
             ) : (
               <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="h-full w-full">

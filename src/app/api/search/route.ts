@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { fetchGraphEndpointNorms, isUrlOnGraph } from "@/lib/graphEndpoints";
+import { extractPureWorkTitle } from "@/lib/pureWorkTitle";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
+import { computeWorkFingerprint } from "@/lib/workIdentity";
 import { createAnonClient } from "@/lib/supabase/clients";
 
 export async function GET(req: Request) {
@@ -33,19 +35,28 @@ export async function GET(req: Request) {
 
   for (const r of data ?? []) {
     if (typeof r.url !== "string" || !isUrlOnGraph(r.url, graphNorms)) continue;
-    const workId = (r.canonical_id as string) ?? r.url;
+    const normUrl = normalizeSynapseEndpoint(r.url);
+    const pure = extractPureWorkTitle(r.title as string | null, normUrl) ?? (r.title as string | null);
+    const groupKey = computeWorkFingerprint(pure, normUrl);
     const row: Row = {
-      url: normalizeSynapseEndpoint(r.url),
-      title: r.title as string | null,
+      url: normUrl,
+      title: pure,
       imageUrl: r.image_url as string | null,
       siteName: r.site_name as string | null,
       updatedAt: (r.updated_at as string) ?? "",
     };
-    const prev = byWork.get(workId);
-    if (!prev || row.updatedAt > prev.updatedAt) byWork.set(workId, row);
+    const prev = byWork.get(groupKey);
+    if (!prev || row.updatedAt > prev.updatedAt) byWork.set(groupKey, row);
   }
 
-  const results = [...byWork.values()]
+  // 同一正規化 URL は1件に（canonical 未統合の残骸対策）
+  const byNormUrl = new Map<string, Row>();
+  for (const row of byWork.values()) {
+    const prev = byNormUrl.get(row.url);
+    if (!prev || row.updatedAt > prev.updatedAt) byNormUrl.set(row.url, row);
+  }
+
+  const results = [...byNormUrl.values()]
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 8)
     .map(({ url, title, imageUrl, siteName }) => ({

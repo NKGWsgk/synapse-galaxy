@@ -6,8 +6,10 @@ import type { SynapseRow } from "@/lib/supabase/clients";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import { CopyLinkButton } from "@/components/galaxy/CopyLinkButton";
 import { SiteFooter } from "@/components/galaxy/SiteFooter";
-import { GraphView } from "./GraphView";
+import { GraphView, type GraphDetailRequest } from "./GraphView";
+import { resolveContentDisplayTitle } from "@/lib/ogpDisplay";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
+import { endpointDisplayTitle } from "@/lib/workEndpoint";
 import type { WorkEndpointMap } from "@/lib/workResolve";
 
 type Props = {
@@ -42,6 +44,7 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
   }, []);
   const [listOpen, setListOpen] = useState(false);
   const [workEndpoints, setWorkEndpoints] = useState<WorkEndpointMap>({});
+  const [detailRequest, setDetailRequest] = useState<GraphDetailRequest | null>(null);
 
   useEffect(() => {
     if (synapses.length === 0) {
@@ -86,6 +89,12 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
   // 削除：確認後に DELETE API → 成功でローカル state から除去
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const openWorkDetail = useCallback((url: string) => {
+    handleFocusUrl(url);
+    setListOpen(false);
+    setDetailRequest({ url, nonce: Date.now() });
+  }, [handleFocusUrl]);
+
   const handleDelete = useCallback(async (synapse: SynapseRow) => {
     setDeletingId(synapse.id);
     try {
@@ -170,22 +179,20 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
             <ul className="space-y-3">
               {synapses.map((s) => (
                 <li key={s.id} className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5 shadow-sm">
-                  <div className="mb-2 flex flex-wrap items-center gap-1 text-[11px] font-medium text-zinc-500">
-                    <button
-                      type="button"
-                      onClick={() => { handleFocusUrl(s.source_url); setListOpen(false); }}
-                      className="max-w-[200px] truncate text-indigo-700 hover:underline"
-                    >
-                      {truncUrl(s.source_url)}
-                    </button>
-                    <span className="text-zinc-300">→</span>
-                    <button
-                      type="button"
-                      onClick={() => { handleFocusUrl(s.target_url); setListOpen(false); }}
-                      className="max-w-[200px] truncate text-violet-700 hover:underline"
-                    >
-                      {truncUrl(s.target_url)}
-                    </button>
+                  <div className="mb-2 flex flex-wrap items-center gap-1 text-[12px] font-medium leading-snug">
+                    <SynapseListWorkLink
+                      url={s.source_url}
+                      workMap={workEndpoints}
+                      className="text-indigo-700"
+                      onOpenDetail={openWorkDetail}
+                    />
+                    <span className="shrink-0 text-zinc-300" aria-hidden>→</span>
+                    <SynapseListWorkLink
+                      url={s.target_url}
+                      workMap={workEndpoints}
+                      className="text-violet-700"
+                      onOpenDetail={openWorkDetail}
+                    />
                   </div>
                   <p className="mb-2 text-sm leading-relaxed text-zinc-700">{s.description}</p>
                   <div className="flex items-center justify-between gap-3">
@@ -236,6 +243,8 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
             synapses={synapses}
             workMap={workEndpoints}
             onFocusUrl={handleFocusUrl}
+            detailRequest={detailRequest}
+            onDetailRequestHandled={() => setDetailRequest(null)}
           />
         )}
       </main>
@@ -247,9 +256,57 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
   );
 }
 
-function truncUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    return u.hostname.replace(/^www\./, "") + u.pathname.slice(0, 24);
-  } catch { return url.slice(0, 32); }
+function SynapseListWorkLink({
+  url,
+  workMap,
+  className,
+  onOpenDetail,
+}: {
+  url: string;
+  workMap: WorkEndpointMap;
+  className: string;
+  onOpenDetail: (url: string) => void;
+}) {
+  const norm = normalizeSynapseEndpoint(url);
+  const workTitle = workMap[norm]?.title ?? null;
+  const [label, setLabel] = useState<string | null>(
+    workTitle ? endpointDisplayTitle(url, workMap) : null,
+  );
+  const [loading, setLoading] = useState(!workTitle);
+
+  useEffect(() => {
+    if (workTitle) {
+      setLabel(endpointDisplayTitle(url, workMap));
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    void fetch(`/api/ogp?url=${encodeURIComponent(url)}`)
+      .then((r) => r.json())
+      .then((j: { title?: string | null }) => {
+        if (cancelled) return;
+        setLabel(resolveContentDisplayTitle(j.title ?? null, url));
+      })
+      .catch(() => {
+        if (!cancelled) setLabel(resolveContentDisplayTitle(null, url));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [url, workTitle, workMap]);
+
+  const display = loading ? "読み込み中…" : (label ?? endpointDisplayTitle(url, workMap));
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenDetail(url)}
+      className={`max-w-[min(100%,14rem)] truncate text-left hover:underline ${className}`}
+      title={display}
+    >
+      {display}
+    </button>
+  );
 }

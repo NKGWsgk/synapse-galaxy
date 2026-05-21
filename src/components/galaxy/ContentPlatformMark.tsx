@@ -86,7 +86,7 @@ export function ContentPlatformMark({
       aria-label={b.name}
       title={b.name}
       className={[
-        "pointer-events-none absolute right-0 top-0 z-20 flex h-5 w-5 select-none items-center justify-center rounded-bl-md border-b border-l border-black/10 bg-clip-padding text-[9px] font-bold leading-none shadow-[0_1px_3px_rgba(0,0,0,0.12)] sm:h-6 sm:w-6 sm:text-[10px]",
+        "pointer-events-none absolute right-0 top-0 z-[1] flex h-5 w-5 select-none items-center justify-center rounded-bl-md border-b border-l border-black/10 bg-clip-padding text-[9px] font-bold leading-none shadow-[0_1px_3px_rgba(0,0,0,0.12)] sm:h-6 sm:w-6 sm:text-[10px]",
         b.className,
         className,
       ].join(" ")}

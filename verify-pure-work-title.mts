@@ -32,6 +32,11 @@ const CASES: Case[] = [
     want: "三体",
   },
   {
+    raw: "三体 を観 る",
+    url: "https://www.netflix.com/title/81024821",
+    want: "三体",
+  },
+  {
     raw: "三体 上",
     url: "https://www.amazon.co.jp/dp/4062938305",
     want: "三体",
@@ -40,6 +45,11 @@ const CASES: Case[] = [
     raw: "【ハヤカワ文庫SF】宇宙への墓標",
     url: "https://www.amazon.co.jp/dp/4150100000",
     want: "宇宙への墓標",
+  },
+  {
+    raw: "火星の人〔新版〕　上 (ハヤカワ文庫SF)",
+    url: "https://www.amazon.co.jp/dp/B09V53MNNK",
+    want: "火星の人",
   },
 ];
 

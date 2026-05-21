@@ -7,7 +7,10 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
-  return { title: `ユーザー ${id.slice(0, 8)}… | Synapse Galaxy` };
+  return {
+    title: `ユーザー ${id.slice(0, 8)}…`,
+    description: "シナプスギャラクシー（Synapse Galaxy）のユーザープロフィール。投稿したシナプス（コンテンツ間の接続）と受け取ったいいね数を確認できます。",
+  };
 }
 
 export default async function UserPage({ params }: { params: Promise<{ id: string }> }) {

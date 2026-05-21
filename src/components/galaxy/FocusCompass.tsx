@@ -257,7 +257,7 @@ export function OgpTileMedia({
 }: {
   pageUrl: string;
   imageUrl: string | null | undefined;
-  slot: "gridMini" | "gridHero" | "modal";
+  slot: "gridMini" | "gridHero" | "modal" | "inlineThumb" | "feedConnection";
   loading: boolean;
   eager?: boolean;
   onError?: () => void;
@@ -600,8 +600,9 @@ function OgpMiniCell({
         <SynapseLoader />
       ) : (
         <>
-          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+          <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
             <OgpTileMedia pageUrl={url ?? synapse.target_url} imageUrl={showImage ? data?.imageUrl : null} slot="gridMini" loading={false} onError={() => setImgError(true)} />
+            <ContentPlatformMark pageUrl={url ?? synapse.target_url} />
           </div>
           <div className="relative flex min-h-[2.75rem] shrink-0 flex-col justify-center px-1 py-1 sm:min-h-[2.875rem] sm:px-1.5 sm:py-1">
             <p
@@ -611,7 +612,6 @@ function OgpMiniCell({
               {displayTitle}
             </p>
           </div>
-          <ContentPlatformMark pageUrl={url ?? synapse.target_url} />
           {/* チェーン深さピル */}
           {showDepthPill && (
             <span
@@ -1566,7 +1566,7 @@ function MapGridCell({
         ].join(" ")}
       >
       {/* 画像エリア */}
-      <div className="min-h-0 w-full flex-1 overflow-hidden">
+      <div className="relative min-h-0 w-full flex-1 overflow-hidden">
         <OgpTileMedia
           pageUrl={url}
           imageUrl={showImage ? data!.imageUrl : null}
@@ -1577,13 +1577,12 @@ function MapGridCell({
         {isFocus && (
           <div className="pointer-events-none absolute inset-0 bg-indigo-500/8" />
         )}
+        <ContentPlatformMark pageUrl={url} />
       </div>
       {/* タイトル */}
       <p className="shrink-0 line-clamp-2 px-1 py-0.5 text-center text-[7px] leading-tight text-zinc-300">
         {displayTitle || url.split("/")[2]}
       </p>
-      {/* プラットフォームアイコン（右上） */}
-      <ContentPlatformMark pageUrl={url} />
       </div>
     );
 }
@@ -2017,19 +2016,19 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
               </div>
             ) : (
               <>
-                  <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+                  <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
                 {ogp?.imageUrl && !imgError ? (
                       <OgpTileMedia pageUrl={focusUrl} imageUrl={ogp.imageUrl} slot="gridHero" loading={false} eager onError={() => setImgError(true)} />
                     ) : (
                       <div className="min-h-0 w-full flex-1 bg-zinc-100" />
                     )}
+                    <ContentPlatformMark pageUrl={focusUrl} />
                   </div>
                   <div className="flex shrink-0 flex-col justify-center px-3 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3">
                     <p className="line-clamp-2 text-center text-[11px] font-semibold leading-snug text-zinc-900 sm:text-xs md:text-sm">
                     {displayTitle}
                   </p>
                 </div>
-                  <ContentPlatformMark pageUrl={focusUrl} />
               </>
             )}
           </button>
@@ -2249,7 +2248,7 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
                 }}
               />
               <div id="keyword-note-body" className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
-                <h2 className="text-sm font-semibold leading-snug text-indigo-900 sm:text-base">キーワード「{keywordNote.keyword}」</h2>
+                <h2 className="text-sm font-semibold leading-snug text-indigo-900 sm:text-base">キーワード {keywordNote.keyword}</h2>
                 <div className="rounded-xl border border-zinc-100 bg-zinc-50/90 px-3 py-3 sm:px-3.5 sm:py-3.5">
                   <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-500">つながりの理由</p>
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">{keywordNote.description.trim() || "（本文なし）"}</p>

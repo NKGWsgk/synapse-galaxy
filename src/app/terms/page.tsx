@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { LegalLayout, Section } from "@/components/legal/LegalLayout";
 
 export const metadata: Metadata = {
-  title: "利用規約 | Synapse Galaxy",
+  title: "利用規約",
+  description:
+    "シナプスギャラクシー（Synapse Galaxy）の利用規約。コンテンツ同士を「なぜ繋がるか」で結ぶシナプス型ネットワークの利用条件を定めます。",
 };
 
 export default function TermsPage() {

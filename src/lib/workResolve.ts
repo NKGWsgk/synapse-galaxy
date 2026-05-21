@@ -186,21 +186,31 @@ export async function upsertContentMetadata(
   const existing = await findMetadataByUrl(supabase, rawUrl);
   if (existing) {
     const mergedLinks = mergePurchaseLinks(existing.purchase_links, deltaLinks);
-    const { data, error } = await supabase
+    const updatePayload: Record<string, unknown> = {
+      url,
+      title: pureTitle,
+      description: fields.description,
+      image_url: fields.imageUrl,
+      site_name: fields.siteName,
+      purchase_links: mergedLinks,
+      updated_at: new Date().toISOString(),
+    };
+    updatePayload.work_fingerprint = fingerprint;
+    let { data, error } = await supabase
       .from("contents_metadata")
-      .update({
-        url,
-        title: pureTitle,
-        description: fields.description,
-        image_url: fields.imageUrl,
-        site_name: fields.siteName,
-        purchase_links: mergedLinks,
-        work_fingerprint: fingerprint,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq("url", existing.url)
       .select()
       .single();
+    if (error?.message?.includes("work_fingerprint")) {
+      delete updatePayload.work_fingerprint;
+      ({ data, error } = await supabase
+        .from("contents_metadata")
+        .update(updatePayload)
+        .eq("url", existing.url)
+        .select()
+        .single());
+    }
     if (error) throw new Error(error.message);
     const row = data as unknown as ContentMetadataLite;
     await unifyPurchaseLinksForCanonicalId(supabase, row.canonical_id, deltaLinks);
@@ -229,12 +239,16 @@ export async function upsertContentMetadata(
     image_url: fields.imageUrl,
     site_name: fields.siteName,
     purchase_links: deltaLinks,
-    work_fingerprint: fingerprint,
     updated_at: new Date().toISOString(),
   };
+  insertPayload.work_fingerprint = fingerprint;
   if (canonicalId) insertPayload.canonical_id = canonicalId;
 
-  const { data, error } = await supabase.from("contents_metadata").insert(insertPayload).select().single();
+  let { data, error } = await supabase.from("contents_metadata").insert(insertPayload).select().single();
+  if (error?.message?.includes("work_fingerprint")) {
+    delete insertPayload.work_fingerprint;
+    ({ data, error } = await supabase.from("contents_metadata").insert(insertPayload).select().single());
+  }
   if (error) throw new Error(error.message);
   const row = data as unknown as ContentMetadataLite;
   await unifyPurchaseLinksForCanonicalId(supabase, row.canonical_id, deltaLinks);
@@ -278,10 +292,12 @@ export async function buildWorkEndpointMap(
     if (!rows?.length) continue;
     const hit = rows[0]!;
     const rep = byWorkId.get(hit.canonical_id) ?? hit;
+    const displayTitle =
+      extractPureWorkTitle(rep.title, rep.url) ?? extractPureWorkTitle(hit.title, hit.url) ?? rep.title;
     out[norm] = {
       workId: hit.canonical_id,
       representativeUrl: rep.url,
-      title: rep.title,
+      title: displayTitle,
       imageUrl: rep.image_url,
       siteName: rep.site_name,
     };
