@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import type { User } from "@supabase/supabase-js";
 import { createBrowserClient } from "@/lib/supabase/browser";
+import { SITE_NAME_EN } from "@/lib/siteMetadata";
 
 type Props = {
   user: User;
@@ -82,7 +83,7 @@ export function NicknameModal({ user, onSet }: Props) {
           </div>
           <h2 className="mb-2 text-center text-base font-bold text-zinc-900">ニックネームを設定</h2>
           <p className="mb-5 text-center text-xs leading-relaxed text-zinc-500">
-            Synapse Galaxy 内で表示される名前を入力してください。<br />
+            {SITE_NAME_EN} 内で表示される名前を入力してください。<br />
             他のユーザーに見える名前です。
           </p>
 

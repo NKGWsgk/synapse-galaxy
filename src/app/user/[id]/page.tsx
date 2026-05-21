@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { createServiceClient } from "@/lib/supabase/clients";
 import { UserProfilePage } from "@/components/galaxy/UserProfilePage";
+import { SITE_NAME_EN, SITE_NAME_JA } from "@/lib/siteMetadata";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +10,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   return {
     title: `ユーザー ${id.slice(0, 8)}…`,
-    description: "シナプスギャラクシー（Synapse Galaxy）のユーザープロフィール。投稿したシナプス（コンテンツ間の接続）と受け取ったいいね数を確認できます。",
+    description: `${SITE_NAME_JA}（${SITE_NAME_EN}）のユーザープロフィール。投稿したシナプス（コンテンツ間の接続）と受け取ったいいね数を確認できます。`,
   };
 }
 

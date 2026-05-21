@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { LegalLayout, Section } from "@/components/legal/LegalLayout";
+import { SITE_NAME_EN, SITE_NAME_JA } from "@/lib/siteMetadata";
 
 export const metadata: Metadata = {
   title: "利用規約",
   description:
-    "シナプスギャラクシー（Synapse Galaxy）の利用規約。コンテンツ同士を「なぜ繋がるか」で結ぶシナプス型ネットワークの利用条件を定めます。",
+    `${SITE_NAME_JA}（${SITE_NAME_EN}）の利用規約。コンテンツ同士を「なぜ繋がるか」で結ぶシナプス型ネットワークの利用条件を定めます。`,
 };
 
 export default function TermsPage() {
@@ -12,7 +13,7 @@ export default function TermsPage() {
     <LegalLayout title="利用規約" updated="2026年5月19日">
       <Section title="1. はじめに">
         <p>
-          本利用規約（以下「本規約」）は、Synapse Galaxy（以下「本サービス」）の利用条件を定めるものです。
+          本利用規約（以下「本規約」）は、{SITE_NAME_EN}（以下「本サービス」）の利用条件を定めるものです。
           本サービスを利用することで、本規約に同意したものとみなします。
         </p>
       </Section>

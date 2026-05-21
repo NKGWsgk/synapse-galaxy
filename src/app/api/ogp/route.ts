@@ -3,7 +3,7 @@ import { amazonAsinFromUrl, isAmazonUrl } from "@/lib/amazon";
 import { stripSynapseAffiliate, withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { fetchOgp } from "@/lib/ogp";
-import { extractPureWorkTitle } from "@/lib/pureWorkTitle";
+import { extractPureWorkTitle, isWeakStreamingPlatformTitle } from "@/lib/pureWorkTitle";
 import { createAnonClient, createServiceClient, type ContentMetadataRow } from "@/lib/supabase/clients";
 import { upsertContentMetadata } from "@/lib/workResolve";
 
@@ -69,6 +69,7 @@ function needsTitleRefresh(title: string | null | undefined, pageUrl: string): b
     }
     if (host.includes("netflix.com")) {
       if (tl === "netflix") return true;
+      if (isWeakStreamingPlatformTitle(t, pageUrl)) return true;
     }
     if (host.includes("disneyplus.com")) {
       if (tl === "disney+" || tl === "disney plus" || tl === "disneyplus") return true;

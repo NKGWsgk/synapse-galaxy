@@ -18,8 +18,11 @@ function decodeBasicEntities(s: string): string {
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/&gt;/g, ">")
+    .replace(/[\uFEFF\u200B-\u200D\u2060\u00AD]/g, "");
 }
 
 function metaContent(

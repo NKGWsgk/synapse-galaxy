@@ -6,7 +6,7 @@ export default function Home() {
     <>
       <div className="sr-only">
         <h1>
-          {SITE_NAME_JA}（{SITE_NAME_EN}）
+          {SITE_NAME_EN}（{SITE_NAME_JA}）
         </h1>
         <p>{SITE_DESCRIPTION}</p>
       </div>

@@ -10,6 +10,7 @@ import { ScrollFeedView } from "./ScrollFeedView";
 import { Header } from "./Header";
 import { NicknameModal } from "./NicknameModal";
 import { createBrowserClient } from "@/lib/supabase/browser";
+import { GoogleSignInButton } from "./GoogleSignInButton";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import type { WorkEndpointMap } from "@/lib/workResolve";
 
@@ -92,24 +93,11 @@ function ViewGate({
   user,
   onOpenPost,
   onDismiss,
-  onSignIn,
 }: {
   user: User | null;
   onOpenPost: () => void;
   onDismiss: () => void;
-  onSignIn: () => Promise<void>;
 }) {
-  const [signingIn, setSigningIn] = useState(false);
-
-  async function handleSignIn() {
-    setSigningIn(true);
-    try {
-      await onSignIn();
-    } finally {
-      setSigningIn(false);
-    }
-  }
-
   return (
     <motion.div
       className="fixed inset-0 z-[200] flex items-center justify-center p-4"
@@ -134,14 +122,10 @@ function ViewGate({
               <p className="mb-5 text-sm leading-relaxed text-zinc-500">
                 もっとシナプスを探索するには<br />Googleアカウントでログインしてください。
               </p>
-              <button
-                type="button"
-                onClick={() => void handleSignIn()}
-                disabled={signingIn}
-                className="w-full rounded-full bg-indigo-600 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-60"
-              >
-                {signingIn ? "リダイレクト中…" : "Googleでログイン"}
-              </button>
+              <GoogleSignInButton
+                visualClassName="flex w-full items-center justify-center rounded-full bg-indigo-600 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500"
+                loadingLabel="ログイン中…"
+              />
             </>
           ) : (
             <>
@@ -199,14 +183,6 @@ export function GalaxyApp() {
         document.querySelector("[data-sg-sidebar]")?.scrollTo({ top: 0, behavior: "smooth" });
       });
     }
-  }, []);
-
-  const signInWithGoogle = useCallback(async () => {
-    const supabase = createBrowserClient();
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
-    });
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -385,7 +361,6 @@ export function GalaxyApp() {
                 setGateOpen(false);
                 scrollToPostPanel();
               }}
-              onSignIn={signInWithGoogle}
               onDismiss={() => {
                 setGateOpen(false);
                 const next = user ? GATE_LOGGED - 5 : GATE_UNLOGGED - 3;

@@ -1,15 +1,25 @@
 import type { Metadata } from "next";
 
 export const SITE_NAME_JA = "シナプスギャラクシー";
-export const SITE_NAME_EN = "Synapse Galaxy";
+export const SITE_NAME_EN = "SYNAPSE Galaxy";
 export const SITE_TAGLINE = "コンテンツを「なぜ繋がるか」で結ぶシナプス型ネットワーク";
 
+/** 検索・schema.org 用の別名（ブランド表記は SITE_NAME_EN を正とする） */
+export const SITE_ALTERNATE_NAMES = [
+  SITE_NAME_JA,
+  "シナプス ギャラクシー",
+  "synapse galaxy",
+  "Synapse Galaxy",
+] as const;
+
 export const SITE_DESCRIPTION =
-  "シナプスギャラクシー（Synapse Galaxy）は、書籍・動画・Web記事などのコンテンツを「なぜ繋がるか」という自由記述で結ぶシナプス型SNSです。4×4コンパスで接続を探索し、AIが抽出するキーワードと8属性（理・文・芸・時ほか）で知的好奇心を可視化します。";
+  "SYNAPSE Galaxy（シナプスギャラクシー）は、書籍・動画・Web記事などのコンテンツを「なぜ繋がるか」という自由記述で結ぶシナプス型SNSです。4×4コンパスで接続を探索し、AIが抽出するキーワードと8属性（理・文・芸・時ほか）で知的好奇心を可視化します。";
 
 export const SITE_KEYWORDS = [
-  "シナプスギャラクシー",
-  "Synapse Galaxy",
+  SITE_NAME_JA,
+  "シナプス ギャラクシー",
+  SITE_NAME_EN,
+  "synapse galaxy",
   "シナプス",
   "コンテンツ",
   "読書",
@@ -40,7 +50,8 @@ export function getSiteUrl(): URL {
 }
 
 export function buildSiteMetadata(overrides?: Metadata): Metadata {
-  const defaultTitle = `${SITE_NAME_JA} | ${SITE_NAME_EN}`;
+  const defaultTitle = `${SITE_NAME_EN} | ${SITE_NAME_JA}`;
+  const combinedName = `${SITE_NAME_EN}（${SITE_NAME_JA}）`;
 
   return {
     metadataBase: getSiteUrl(),
@@ -49,14 +60,14 @@ export function buildSiteMetadata(overrides?: Metadata): Metadata {
       template: `%s | ${SITE_NAME_JA}`,
     },
     description: SITE_DESCRIPTION,
-    keywords: SITE_KEYWORDS,
-    applicationName: SITE_NAME_JA,
+    keywords: [...SITE_KEYWORDS],
+    applicationName: combinedName,
     category: "social network",
     openGraph: {
       type: "website",
       locale: "ja_JP",
       url: "/",
-      siteName: SITE_NAME_JA,
+      siteName: combinedName,
       title: defaultTitle,
       description: SITE_DESCRIPTION,
     },
@@ -81,8 +92,8 @@ export function buildWebsiteJsonLd(): Record<string, unknown> {
   return {
     "@context": "https://schema.org",
     "@type": "WebSite",
-    name: SITE_NAME_JA,
-    alternateName: [SITE_NAME_EN, "synapse galaxy", "シナプス ギャラクシー"],
+    name: SITE_NAME_EN,
+    alternateName: [...SITE_ALTERNATE_NAMES],
     url: siteUrl.origin,
     description: SITE_DESCRIPTION,
     inLanguage: "ja",

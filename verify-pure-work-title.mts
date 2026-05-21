@@ -37,6 +37,16 @@ const CASES: Case[] = [
     want: "三体",
   },
   {
+    raw: "クイーンズ・ギャンビット\uFEFFを観\uFEFFる | Netflix (\uFEFFネ\uFEFFッ\uFEFFト\uFEFFフ\uFEFFリ\uFEFFッ\uFEFFク\uFEFFス\uFEFF) 公\uFEFF式サ\uFEFFイ\uFEFFト",
+    url: "https://www.netflix.com/watch/80243261",
+    want: "クイーンズ・ギャンビット",
+  },
+  {
+    raw: "Watch The Queen's Gambit | Netflix Official Site",
+    url: "https://www.netflix.com/watch/80243261",
+    want: "The Queen's Gambit",
+  },
+  {
     raw: "三体 上",
     url: "https://www.amazon.co.jp/dp/4062938305",
     want: "三体",

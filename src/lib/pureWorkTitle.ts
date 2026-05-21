@@ -1,5 +1,12 @@
 import { isAmazonUrl } from "@/lib/amazon";
 
+/** Netflix OGP 等に混入するゼロ幅文字（「を観る」除去・パイプ分割を壊す） */
+const INVISIBLE_UNICODE_RE = /[\uFEFF\u200B-\u200D\u2060\u00AD]/g;
+
+function stripInvisibleUnicode(s: string): string {
+  return s.replace(INVISIBLE_UNICODE_RE, "");
+}
+
 function normalizeWhitespace(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
@@ -10,12 +17,15 @@ function amazonPipeLeadSegment(s: string): boolean {
 
 /** パイプ/コロン区切りの1セグメントがプラットフォーム名だけか */
 function isPlatformOnlySegment(seg: string): boolean {
-  const s = seg.trim();
+  const s = stripInvisibleUnicode(seg).trim();
   if (!s) return true;
   return (
     /^(amazon(\.co\.jp|\.com)?|netflix|hulu|disney\+?|disney\s*plus|disneyplus|prime\s*video|プライム\s*ビデオ|u-?next|ユーネクスト|youtube|spotify|apple\s*music|youtube\s*music|楽天|rakuten|audible)$/i.test(
       s,
-    ) || /公式サイト/i.test(s)
+    ) ||
+    /公式サイト/i.test(s) ||
+    /^(watch\s+)?netflix\b/i.test(s) ||
+    /official\s*site$/i.test(s)
   );
 }
 
@@ -45,6 +55,9 @@ const MEDIA_TYPE_SUFFIX_RE =
 /** 末尾の視聴アクション（Netflix OGP の「を観 る」のように文字間スペースあり） */
 const WATCH_ACTION_SUFFIX_RE =
   /\s*を\s*(?:観|見|聴|視聴)\s*(?:す\s*る|る)?(?:\s*[」』】\])]+)?\s*$/u;
+
+/** 英語 Netflix OGP: "Watch The Queen's Gambit | …" */
+const WATCH_PREFIX_RE = /^watch\s+/i;
 
 /** 作品名の外枠だけ（【レーベル】は stripPublisherImprints で扱う） */
 const OUTER_WRAP_RE = /^[\s「『\[(〈《]+|[\s」』\])〉》]+$/gu;
@@ -188,6 +201,7 @@ function stripGlobalSuffixes(t: string): string {
   for (let i = 0; i < 4; i++) {
     const next = normalizeWhitespace(
       s
+        .replace(WATCH_PREFIX_RE, "")
         .replace(WATCH_ACTION_SUFFIX_RE, "")
         .replace(VOLUME_SUFFIX_RE, "")
         .replace(MEDIA_TYPE_SUFFIX_RE, "")
@@ -197,6 +211,33 @@ function stripGlobalSuffixes(t: string): string {
     s = next;
   }
   return s;
+}
+
+/** ストリーミング OGP がプラットフォーム名だけ・サイト名だけのとき true */
+export function isWeakStreamingPlatformTitle(title: string | null | undefined, pageUrl: string): boolean {
+  const raw = title?.trim();
+  if (!raw) return true;
+  const t = stripInvisibleUnicode(raw);
+  if (!t) return true;
+  if (isPlatformOnlySegment(t)) return true;
+
+  try {
+    const h = new URL(pageUrl).hostname.toLowerCase();
+    const tl = t.toLowerCase();
+    if (h.includes("netflix.com")) {
+      if (tl === "netflix") return true;
+      if (/^netflix\b/i.test(t) && (/公式|official\s*site/i.test(t) || t.length < 48)) return true;
+    }
+    if (h.includes("disneyplus.com") && (tl === "disney+" || tl === "disney plus" || tl === "disneyplus")) {
+      return true;
+    }
+    if ((h.includes("hulu.com") || h.includes("hulu.jp")) && tl === "hulu") return true;
+    if (h.includes("open.spotify.com") && tl === "spotify") return true;
+  } catch {
+    // ignore
+  }
+
+  return false;
 }
 
 /**
@@ -211,7 +252,7 @@ export function extractPureWorkTitle(title: string | null | undefined, pageUrl: 
   const raw = title?.trim();
   if (!raw) return null;
 
-  let t = stripOuterWrappers(raw);
+  let t = stripOuterWrappers(stripInvisibleUnicode(raw));
   t = t.replace(LEADING_BRACKETED_IMPRINT_RE, "").replace(/^】+/, "");
   t = stripPlatformPrefixes(t);
 

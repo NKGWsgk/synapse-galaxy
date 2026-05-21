@@ -1,5 +1,5 @@
 import { amazonAsinFromUrl, isAmazonUrl } from "@/lib/amazon";
-import { extractPureWorkTitle } from "@/lib/pureWorkTitle";
+import { extractPureWorkTitle, isWeakStreamingPlatformTitle } from "@/lib/pureWorkTitle";
 
 /**
  * ブラウザ直読みはホットリンク等で弾かれるため、自前プロキシ経由で表示する用 URL（クライアント用・軽量）
@@ -67,6 +67,7 @@ export function isWeakContentTitleLabel(label: string, pageUrl: string): boolean
     }
   }
   if (/^amazon\.co\.jp$/i.test(label) || /^amazon\.com$/i.test(label)) return true;
+  if (isWeakStreamingPlatformTitle(label, pageUrl)) return true;
   if (
     label === "YouTube" ||
     label === "Netflix" ||
