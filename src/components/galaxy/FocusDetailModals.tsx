@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useState } from "react";
 import { isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
 import {
   contentPlatformDisplayName,
@@ -166,6 +166,7 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
 
   const openDetail = useCallback((url: string) => {
     if (!detailModalEnabled) return;
+    setDetailOgpLoading(true);
     setDetailUrl(url);
     setDetailOpen(true);
   }, [detailModalEnabled]);
@@ -186,7 +187,7 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
     onDetailRequestHandled?.();
   }, [detailModalEnabled, detailRequest?.nonce, detailRequest, workMap, onDetailRequestHandled, openDetail]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!detailOpen) return;
     let cancelled = false;
     setDescExpanded(false);
@@ -195,6 +196,8 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
     const cached = ogpMiniCache.get(detailUrl);
     if (cached?.title || cached?.imageUrl) {
       setDetailOgp({ title: cached.title, imageUrl: cached.imageUrl, description: null, siteName: null });
+    } else {
+      setDetailOgp(null);
     }
     async function load(refresh: boolean) {
       const qs = new URLSearchParams({ url: detailUrl });
@@ -304,7 +307,9 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
                   })()}
                   <section className="rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2.5 sm:px-3.5 sm:py-3">
                     <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">概要</h3>
-                    {detailOgp?.description?.trim() ? (
+                    {detailOgpLoading ? (
+                      <p className="text-sm leading-relaxed text-zinc-400">読み込み中…</p>
+                    ) : detailOgp?.description?.trim() ? (
                       <>
                         <div className={["relative overflow-hidden", descExpanded ? "" : "max-h-[5.5em]"].join(" ")}>
                           <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{detailOgp.description.trim()}</p>
@@ -340,7 +345,6 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
                       </ul>
                     </section>
                   ) : null}
-                  <p className="break-all text-[11px] leading-snug text-zinc-500">{detailUrl}</p>
                 </div>
               </div>
             </motion.div>

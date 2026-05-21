@@ -1581,7 +1581,7 @@ function MapGridCell({
       </div>
       {/* タイトル */}
       <p className="shrink-0 line-clamp-2 px-1 py-0.5 text-center text-[7px] leading-tight text-zinc-300">
-        {displayTitle || url.split("/")[2]}
+        {loading ? "読み込み中…" : (displayTitle || url.split("/")[2])}
       </p>
       </div>
     );
@@ -1812,6 +1812,7 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
   const [ringGridLayout, setRingGridLayout] = useState<RingGridLayout | null>(null);
   const [ogp, setOgp] = useState<{ title: string | null; imageUrl: string | null; description: string | null; siteName: string | null } | null>(null);
   const [ogpLoading, setOgpLoading] = useState(true);
+  const [ogpRefreshing, setOgpRefreshing] = useState(true);
   const [imgError, setImgError] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
@@ -1834,6 +1835,7 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
   useEffect(() => {
     let cancelled = false;
     // リングセルキャッシュがあれば即座に表示（フォーカス切替アニメ中のちらつき防止）
+    setOgpRefreshing(true);
     const cached = ogpMiniCache.get(focusUrl);
     if (cached?.title || cached?.imageUrl) {
       setOgp({ title: cached.title, imageUrl: cached.imageUrl, description: null, siteName: null });
@@ -1855,7 +1857,12 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
         await loadFocusOgp(true);
       }
     }
-    void loadFocusOgp(false).catch(() => { if (!cancelled) setOgp(null); }).finally(() => { if (!cancelled) setOgpLoading(false); });
+    void loadFocusOgp(false).catch(() => { if (!cancelled) setOgp(null); }).finally(() => {
+      if (!cancelled) {
+        setOgpLoading(false);
+        setOgpRefreshing(false);
+      }
+    });
     return () => { cancelled = true; };
   }, [focusUrl]);
 
@@ -2158,7 +2165,9 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
                 ) : null}
                 <div className="space-y-4 px-4 py-4 sm:px-5 sm:py-5">
                   {ogp?.siteName ? <p className="text-[11px] font-medium text-indigo-600">{ogp.siteName}</p> : null}
-                  <h2 id="focus-detail-title" className="text-base font-semibold leading-snug text-zinc-900 sm:text-lg">{displayTitle}</h2>
+                  <h2 id="focus-detail-title" className="text-base font-semibold leading-snug text-zinc-900 sm:text-lg">
+                    {ogpLoading ? "読み込み中…" : displayTitle}
+                  </h2>
                   <a
                     href={withSynapseAffiliate(focusUrl)}
                     target="_blank"
@@ -2174,7 +2183,9 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
                   </a>
                   <section className="rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2.5 sm:px-3.5 sm:py-3">
                     <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">概要</h3>
-                    {ogp?.description?.trim() ? (
+                    {ogpRefreshing ? (
+                      <p className="text-sm leading-relaxed text-zinc-400">読み込み中…</p>
+                    ) : ogp?.description?.trim() ? (
                       <>
                         <div className={["relative overflow-hidden", descExpanded ? "" : "max-h-[5.5em]"].join(" ")}>
                           <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{ogp.description.trim()}</p>
@@ -2213,7 +2224,6 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
                       </ul>
                     </section>
                   ) : null}
-                  <p className="break-all text-[11px] leading-snug text-zinc-500">{focusUrl}</p>
                 </div>
               </div>
             </motion.div>

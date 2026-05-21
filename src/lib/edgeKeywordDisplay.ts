@@ -44,6 +44,53 @@ export function sanitizeEdgeKeywordBreakOutput(original: string, formatted: unkn
   return `${head}\n${tail}`;
 }
 
+const EDGE_KEYWORD_BREAK_AFTER = new Set(["、", "。", "，", ",", "."]);
+
+/**
+ * 句読点の直後で2行に分ける（AI 失敗時・表示フォールバック・保存前の決定論的改行）。
+ * 両行が上限以内かつ助詞1字行にならない候補のうち、読点優先・行長バランスが良いものを選ぶ。
+ */
+export function findEdgeKeywordTwoLineSplit(flat: string): readonly [string, string] | null {
+  const t = flat.normalize("NFC").replace(/\u200b/g, "");
+  const g = [...t];
+  if (g.length <= SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE) return null;
+
+  type Cand = { head: string; tail: string; punctRank: number; imbalance: number };
+  let best: Cand | null = null;
+
+  for (let i = 1; i < t.length; i++) {
+    const punct = t[i - 1]!;
+    if (!EDGE_KEYWORD_BREAK_AFTER.has(punct)) continue;
+
+    const head = t.slice(0, i);
+    const tail = t.slice(i);
+    if (!head || !tail || `${head}${tail}` !== t) continue;
+    if (isLoneAssistParticleSegment(head) || isLoneAssistParticleSegment(tail)) continue;
+
+    const headG = [...head];
+    const tailG = [...tail];
+    if (
+      headG.length > SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE ||
+      tailG.length > SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE
+    ) {
+      continue;
+    }
+
+    const punctRank = punct === "、" ? 0 : punct === "。" ? 1 : punct === "，" ? 2 : punct === "," ? 3 : 4;
+    const imbalance = Math.abs(headG.length - tailG.length);
+    const cand: Cand = { head, tail, punctRank, imbalance };
+    if (
+      !best ||
+      cand.punctRank < best.punctRank ||
+      (cand.punctRank === best.punctRank && cand.imbalance < best.imbalance)
+    ) {
+      best = cand;
+    }
+  }
+
+  return best ? [best.head, best.tail] : null;
+}
+
 /**
  * keywords[0] などの接続短題の表示計画。
  * - DB に U+000A があると explicit。
@@ -76,6 +123,8 @@ function splitEdgeLabelForPillDisplay(flat: string): string[] {
   if (g.length <= SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE) {
     return [jaKeywordSoftBreakHints(t)];
   }
+  const punctSplit = findEdgeKeywordTwoLineSplit(t);
+  if (punctSplit) return [...punctSplit];
   const n = SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE;
   return [g.slice(0, n).join(""), g.slice(n).join("")];
 }

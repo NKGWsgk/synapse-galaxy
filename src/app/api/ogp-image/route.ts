@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { OGP_BROWSER_UA } from "@/lib/ogp";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MIN_IMAGE_BYTES = 512;
 
 function isSafeToFetchImage(u: string): boolean {
   try {
@@ -75,6 +76,9 @@ export async function GET(req: Request) {
     const buf = await res.arrayBuffer();
     if (buf.byteLength > MAX_IMAGE_BYTES) {
       return new NextResponse(null, { status: 413 });
+    }
+    if (buf.byteLength < MIN_IMAGE_BYTES) {
+      return new NextResponse(null, { status: 404 });
     }
 
     const outType =

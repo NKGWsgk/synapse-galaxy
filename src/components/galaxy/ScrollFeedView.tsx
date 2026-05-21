@@ -172,7 +172,7 @@ function FocusHeroImage({ url }: { url: string }) {
   const showImage = !!data?.imageUrl && !imgError;
 
   return (
-    <div className="relative isolate h-[20dvh] min-h-[6.5rem] max-h-[11rem] w-full overflow-hidden">
+    <div className="relative isolate h-[24dvh] min-h-[7.8rem] max-h-[13.2rem] w-full overflow-hidden">
       <div className="absolute inset-0">
         <OgpTileMedia
           pageUrl={url}
@@ -651,7 +651,7 @@ export function ScrollFeedView({
           ref={stickyRef}
           className={[
             "sticky top-0 z-20 isolate flex flex-col gap-1 border-b border-zinc-200/80 bg-zinc-50 px-3 pb-1 pt-1 sm:px-4",
-            introOpen ? "" : "max-h-[33dvh] min-h-0 overflow-hidden",
+            introOpen ? "" : "max-h-[40dvh] min-h-0 overflow-hidden",
           ].join(" ")}
         >
           <FocusFocusBlock

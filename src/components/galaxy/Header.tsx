@@ -6,6 +6,7 @@ import { AuthPanel } from "./AuthPanel";
 import { useAuthFeedback } from "./AuthFeedback";
 import { SiteFooter } from "./SiteFooter";
 import { SmartInputPanel } from "./SmartInputPanel";
+import { ViewModeToggle, type ViewMode } from "./ViewModeToggle";
 import { createBrowserClient } from "@/lib/supabase/browser";
 
 type SearchResult = {
@@ -48,9 +49,12 @@ type Props = {
   onFocusUrl: (url: string) => void;
   onUser: (user: User | null) => void;
   user: User | null;
-  onSynapseCreated: () => void;
+  onSynapseCreated: (sourceUrl: string) => void;
   mobileOpen: boolean;
   onMobileOpenChange: (open: boolean) => void;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
+  showViewModeToggle: boolean;
 };
 
 const SIDEBAR_W_KEY = "sg-sidebar-w";
@@ -58,7 +62,18 @@ const SIDEBAR_W_MIN = 240;
 const SIDEBAR_W_MAX = 480;
 const SIDEBAR_W_DEFAULT = 320;
 
-export function Header({ googleClientId, onFocusUrl, onUser, user, onSynapseCreated, mobileOpen, onMobileOpenChange }: Props) {
+export function Header({
+  googleClientId,
+  onFocusUrl,
+  onUser,
+  user,
+  onSynapseCreated,
+  mobileOpen,
+  onMobileOpenChange,
+  viewMode,
+  onViewModeChange,
+  showViewModeToggle,
+}: Props) {
   const { notifySessionExpired } = useAuthFeedback();
   const [sidebarWidth, setSidebarWidth] = useState<number>(SIDEBAR_W_DEFAULT);
   const [resizing, setResizing] = useState(false);
@@ -250,8 +265,8 @@ export function Header({ googleClientId, onFocusUrl, onUser, user, onSynapseCrea
     closeMobile();
   }
 
-  function handleSynapseCreated() {
-    onSynapseCreated();
+  function handleSynapseCreated(sourceUrl: string) {
+    onSynapseCreated(sourceUrl);
     closeMobile();
   }
 
@@ -298,21 +313,28 @@ export function Header({ googleClientId, onFocusUrl, onUser, user, onSynapseCrea
         </div>
       </div>
 
-      <div className="flex shrink-0 items-start justify-between gap-2">
+      <div className="flex shrink-0 items-center justify-between gap-2">
         <a href="/" className="flex flex-col leading-none no-underline" onClick={closeMobile}>
           <span className="text-[8px] font-semibold uppercase tracking-[0.3em] text-indigo-500/80">Synapse</span>
           <span className="text-base font-semibold text-zinc-900">Galaxy</span>
         </a>
-        <button
-          type="button"
-          aria-label="メニューを閉じる"
-          onClick={closeMobile}
-          className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-zinc-100 md:hidden"
-        >
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {showViewModeToggle ? (
+            <div className="hidden md:block">
+              <ViewModeToggle mode={viewMode} onSelect={onViewModeChange} />
+            </div>
+          ) : null}
+          <button
+            type="button"
+            aria-label="メニューを閉じる"
+            onClick={closeMobile}
+            className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-zinc-100 md:hidden"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* 検索バー */}

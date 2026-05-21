@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isAmazonUrl } from "@/lib/amazon";
 import { stripSynapseAffiliate, withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
-import { fetchOgpResilient, needsTitleRefresh, pureTitleForResponse } from "@/lib/ogpResolve";
+import { fetchOgpResilient, needsImageRefresh, needsTitleRefresh, pureTitleForResponse } from "@/lib/ogpResolve";
 import { createAnonClient, createServiceClient, type ContentMetadataRow } from "@/lib/supabase/clients";
 import { upsertContentMetadata } from "@/lib/workResolve";
 
@@ -51,6 +51,7 @@ export async function GET(req: Request) {
     if (
       !forceRefresh &&
       cached?.image_url &&
+      !needsImageRefresh(cached.image_url) &&
       !needsDescriptionRefresh(cached.description, normalizedUrl) &&
       !needsTitleRefresh(cached.title, normalizedUrl)
     ) {

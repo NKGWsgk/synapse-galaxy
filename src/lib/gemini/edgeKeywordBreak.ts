@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { sanitizeEdgeKeywordBreakOutput } from "../edgeKeywordDisplay";
+import { findEdgeKeywordTwoLineSplit, sanitizeEdgeKeywordBreakOutput } from "../edgeKeywordDisplay";
 import {
   SYNAPSE_EDGE_AI_BREAK_FROM_CHARS,
   SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE,
@@ -33,6 +33,11 @@ export async function suggestEdgeKeywordLineBreak(original: string): Promise<str
     return original;
   }
 
+  const punctSplit = findEdgeKeywordTwoLineSplit(flatForBreak);
+  if (punctSplit) {
+    return `${punctSplit[0]}\n${punctSplit[1]}`;
+  }
+
   const systemInstruction =
     "あなたは、知識グラフ上の短いラベル文に「どこで改行するか」とだけ答えます。" +
     "説明や前置き、マークダウンは書かず、求められた形式の JSON だけを返してください。";
@@ -54,7 +59,8 @@ export async function suggestEdgeKeywordLineBreak(original: string): Promise<str
     "・英字や数字が続いている部分の途中。",
     "・どちらかの行が「へ」など助詞1文字だけになるところ。",
     "",
-    "切ってよい例：句読点の直後、意味の小さなまとまりの境目、スペースの後。",
+    "改行位置の最優先：読点「、」の直後（例：「…紡ぐ、\\n薄氷を…」）。句点「。」やカンマの直後も同様に優先する。",
+    "切ってよい例：上記の句読点直後、意味の小さなまとまりの境目、スペースの後。",
     "",
     '答えは JSON だけ。{"formatted":"…"} の形。改行を入れてよいのはその1文字分だけ。',
     '例：{"formatted":"1行目\\n2行目"}',

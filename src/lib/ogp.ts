@@ -13,6 +13,23 @@ export type OgpResult = {
 export const OGP_BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+function amazonFetchHeaders(): Record<string, string> {
+  return {
+    "User-Agent": OGP_BROWSER_UA,
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cache-Control": "no-cache",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+  };
+}
+
 function decodeBasicEntities(s: string): string {
   return s
     .replace(/&amp;/gi, "&")
@@ -218,10 +235,29 @@ function cleanTitleForHost(title: string | null, pageUrl: string): string | null
   return t || null;
 }
 
+/** Amazon 商品ページから画像 URL だけ再取得（bot 壁・OGP 欠落時のフォールバック） */
+export async function fetchAmazonProductImage(pageUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(pageUrl, {
+      redirect: "follow",
+      headers: amazonFetchHeaders(),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const finalUrl = res.url || pageUrl;
+    const html = await res.text();
+    if (html.length < 20_000) return null;
+    const $ = load(html);
+    return pickImageUrl($, finalUrl);
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchOgp(url: string): Promise<OgpResult> {
   const res = await fetch(url, {
     redirect: "follow",
-    headers: {
+    headers: isAmazonUrl(url) ? amazonFetchHeaders() : {
       "User-Agent": OGP_BROWSER_UA,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
       "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",

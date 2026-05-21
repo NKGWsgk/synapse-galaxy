@@ -1,17 +1,16 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { User } from "@supabase/supabase-js";
-import {
+import { isAllowedSynapseUrl,
   ALLOWED_SYNAPSE_ALERT_MESSAGE,
   ALLOWED_SYNAPSE_URL_MESSAGE,
-  isAllowedSynapseUrl,
   synapseUrlFieldError,
 } from "@/lib/contentPlatform";
+import { isAmazonUrl } from "@/lib/amazon";
 import { SYNAPSE_EDGE_REASON_MAX_CHARS, SYNAPSE_EDGE_TITLE_MAX_CHARS } from "@/lib/synapseLimits";
 import { formatWorkDisplayTitle, getOgpImageDisplaySrc } from "@/lib/ogpDisplay";
-import { ogpImageLayout } from "@/lib/ogpImagePresentation";
 import {
   clearSmartInputDraft,
   hasSmartInputDraftContent,
@@ -233,9 +232,25 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
   const [loading, setLoading] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const imgRetriedRef = useRef(false);
+
+  const loadOgp = useCallback(async (targetUrl: string, refresh = false) => {
+    const qs = new URLSearchParams({ url: targetUrl });
+    if (refresh) qs.set("refresh", "1");
+    const r = await fetch(`/api/ogp?${qs.toString()}`);
+    const j = (await r.json()) as OgpPreview & { error?: string };
+    if (j.error) throw new Error(j.error);
+    return {
+      title: j.title ?? null,
+      description: j.description ?? null,
+      imageUrl: j.imageUrl ?? null,
+      siteName: j.siteName ?? null,
+    } satisfies OgpPreview;
+  }, []);
 
   useEffect(() => {
     const u = url.trim();
+    imgRetriedRef.current = false;
     if (!u) { setData(null); setLoading(false); setError(null); return; }
     if (!isValidUrl(u)) { setData(null); setLoading(false); setError("URL形式が正しくないかも"); return; }
     if (!isAllowedSynapseUrl(u)) {
@@ -246,7 +261,8 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
     }
 
     const hit = ogpPreviewCache.get(u);
-    if (hit) { setData(hit); setLoading(false); setError(null); return; }
+    const cacheUsable = hit && hit.title && hit.imageUrl && !(isAmazonUrl(u) && !hit.imageUrl);
+    if (cacheUsable) { setData(hit); setLoading(false); setError(null); return; }
 
     let cancelled = false;
     setLoading(true);
@@ -254,26 +270,43 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
     setImgError(false);
 
     const t = setTimeout(() => {
-      void fetch(`/api/ogp?url=${encodeURIComponent(u)}`)
-        .then((r) => r.json())
-        .then((j: OgpPreview & { error?: string }) => {
+      void loadOgp(u, isAmazonUrl(u) && !hit?.imageUrl)
+        .then((packed) => {
           if (cancelled) return;
-          if (j.error) { setError(j.error); setData(null); return; }
-          const packed: OgpPreview = { title: j.title ?? null, description: j.description ?? null, imageUrl: j.imageUrl ?? null, siteName: j.siteName ?? null };
           ogpPreviewCache.set(u, packed);
           setData(packed);
         })
-        .catch(() => { if (!cancelled) setError("OGP取得に失敗"); })
+        .catch((e: unknown) => {
+          if (cancelled) return;
+          setError(e instanceof Error ? e.message : "OGP取得に失敗");
+          setData(null);
+        })
         .finally(() => { if (!cancelled) setLoading(false); });
     }, 450);
 
     return () => { cancelled = true; clearTimeout(t); };
-  }, [url]);
+  }, [url, loadOgp]);
+
+  const handleImgError = useCallback(() => {
+    const u = url.trim();
+    if (!u || imgRetriedRef.current) {
+      setImgError(true);
+      return;
+    }
+    imgRetriedRef.current = true;
+    void loadOgp(u, true)
+      .then((packed) => {
+        ogpPreviewCache.set(u, packed);
+        setData(packed);
+        if (packed.imageUrl) setImgError(false);
+        else setImgError(true);
+      })
+      .catch(() => setImgError(true));
+  }, [url, loadOgp]);
 
   if (!url.trim()) return null;
 
   const title = formatWorkDisplayTitle(data?.title ?? null, url) ?? data?.title?.trim() ?? null;
-  const thumbLayout = ogpImageLayout(url, "inlineThumb");
 
   return (
     <div className="min-w-0 w-full rounded-xl border border-zinc-200 bg-white p-2 shadow-sm">
@@ -282,41 +315,27 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
         {loading ? <span className="text-[10px] text-zinc-400">取得中…</span> : null}
       </div>
       {error ? (
-        <p className="text-xs text-rose-600">{error}</p>
+        <p className="text-xs leading-snug text-rose-600">{error}</p>
       ) : (
         <div className="flex min-w-0 flex-col gap-1.5">
-          <div
-            className={
-              thumbLayout.mode === "video"
-                ? "relative aspect-video max-h-16 w-full shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950"
-                : thumbLayout.outer
-            }
-          >
+          <div className="relative h-16 w-full shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100">
             {data?.imageUrl && !imgError ? (
-              thumbLayout.mode === "video" ? (
-                <div className={thumbLayout.inner}>
-                  <img
-                    src={getOgpImageDisplaySrc(data.imageUrl, url)}
-                    alt=""
-                    className={thumbLayout.img}
-                    loading="lazy"
-                    onError={() => setImgError(true)}
-                  />
-                </div>
-              ) : (
-                <img
-                  src={getOgpImageDisplaySrc(data.imageUrl, url)}
-                  alt=""
-                  className={thumbLayout.img}
-                  loading="lazy"
-                  onError={() => setImgError(true)}
-                />
-              )
+              <img
+                src={getOgpImageDisplaySrc(data.imageUrl, url)}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover object-center"
+                loading="lazy"
+                onError={handleImgError}
+              />
             ) : null}
           </div>
-          <div className="min-w-0 flex-1 overflow-hidden">
-            {data?.siteName ? <p className="truncate text-[10px] font-medium text-indigo-600">{data.siteName}</p> : null}
-            <p className="truncate text-xs font-semibold leading-snug text-zinc-900">{title ?? "（タイトル取得なし）"}</p>
+          <div className="min-w-0">
+            {data?.siteName ? (
+              <p className="truncate text-[10px] font-medium leading-tight text-indigo-600">{data.siteName}</p>
+            ) : null}
+            <p className="truncate text-xs font-semibold leading-snug text-zinc-900">
+              {loading ? "読み込み中…" : (title ?? "（タイトル取得なし）")}
+            </p>
           </div>
         </div>
       )}
@@ -328,7 +347,13 @@ const TITLE_MAX = SYNAPSE_EDGE_TITLE_MAX_CHARS;
 const REASON_MAX = SYNAPSE_EDGE_REASON_MAX_CHARS;
 const DRAFT_SAVE_MS = 400;
 
-export function SmartInputPanel({ user, onCreated }: { user: User | null; onCreated: () => void }) {
+export function SmartInputPanel({
+  user,
+  onCreated,
+}: {
+  user: User | null;
+  onCreated: (sourceUrl: string) => void;
+}) {
   const supabase = useMemo(() => createBrowserClient(), []);
   const { notifySessionExpired } = useAuthFeedback();
   const draftUserId = user?.id ?? null;
@@ -418,13 +443,14 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
         return;
       }
       setMessage("シナプスを繋ぎました！");
+      const createdSourceUrl = sourceUrl.trim();
       clearSmartInputDraft(draftUserId);
       setSourceUrl("");
       setTargetUrl("");
       setTitle("");
       setDescription("");
       setConfirmOpen(false);
-      setTimeout(onCreated, 800);
+      setTimeout(() => onCreated(createdSourceUrl), 800);
     } catch {
       setMessage("通信エラー");
       setConfirmOpen(false);
@@ -441,8 +467,8 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
         </p>
       ) : null}
 
-      <motion.div layout className="grid gap-3 sm:grid-cols-2 sm:gap-1.5">
-        <div className="min-w-0 space-y-0.5">
+      <motion.div layout className="grid items-start gap-3 sm:grid-cols-2 sm:items-stretch sm:gap-1.5">
+        <div className="flex min-w-0 flex-col space-y-0.5">
           <label htmlFor="synapse-source-url" className="block text-[11px] font-medium text-zinc-600">
             出発作品
           </label>
@@ -457,7 +483,7 @@ export function SmartInputPanel({ user, onCreated }: { user: User | null; onCrea
             <OgpPreviewCard url={sourceUrl} label="出発作品" />
           ) : null}
         </div>
-        <div className="min-w-0 space-y-0.5">
+        <div className="flex min-w-0 flex-col space-y-0.5">
           <div className="flex items-center gap-1">
             <label htmlFor="synapse-target-url" className="text-[11px] font-medium text-zinc-600">
               着地作品

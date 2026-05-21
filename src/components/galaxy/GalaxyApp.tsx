@@ -8,6 +8,7 @@ import { AuthFeedbackProvider } from "./AuthFeedback";
 import { GraphView } from "./GraphView";
 import { ScrollFeedView } from "./ScrollFeedView";
 import { Header } from "./Header";
+import { ViewModeToggle, type ViewMode } from "./ViewModeToggle";
 import { NicknameModal } from "./NicknameModal";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import { GoogleSignInButton } from "./GoogleSignInButton";
@@ -45,8 +46,6 @@ const GATE_POST_COUNT = 5;
 const STORAGE_KEY = "sgViewCount";
 const MOBILE_VIEW_KEY = "sgMobileView";
 
-type MobileViewMode = "feed" | "map";
-
 function loadViewCount(): number {
   try { return parseInt(localStorage.getItem(STORAGE_KEY) ?? "0", 10) || 0; }
   catch { return 0; }
@@ -54,13 +53,13 @@ function loadViewCount(): number {
 function saveViewCount(n: number) {
   try { localStorage.setItem(STORAGE_KEY, String(n)); } catch { /* noop */ }
 }
-function loadMobileViewMode(): MobileViewMode {
+function loadMobileViewMode(): ViewMode {
   try {
     const v = localStorage.getItem(MOBILE_VIEW_KEY);
     return v === "map" ? "map" : "feed";
   } catch { return "feed"; }
 }
-function saveMobileViewMode(mode: MobileViewMode) {
+function saveMobileViewMode(mode: ViewMode) {
   try { localStorage.setItem(MOBILE_VIEW_KEY, mode); } catch { /* noop */ }
 }
 
@@ -160,7 +159,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   const [userPostCount, setUserPostCount] = useState(0);
   const [gateOpen, setGateOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [mobileViewMode, setMobileViewMode] = useState<MobileViewMode>("feed");
+  const [mobileViewMode, setMobileViewMode] = useState<ViewMode>("feed");
 
   const refresh = useCallback(async () => {
     try {
@@ -192,12 +191,9 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   useEffect(() => { setViewCount(loadViewCount()); }, []);
   useEffect(() => { setMobileViewMode(loadMobileViewMode()); }, []);
 
-  const toggleMobileViewMode = useCallback(() => {
-    setMobileViewMode((prev) => {
-      const next: MobileViewMode = prev === "feed" ? "map" : "feed";
-      saveMobileViewMode(next);
-      return next;
-    });
+  const setViewMode = useCallback((next: ViewMode) => {
+    setMobileViewMode(next);
+    saveMobileViewMode(next);
   }, []);
 
   // ?focus=<url> でフォーカス URL を初期化（アフィリエイト tag は URL に載せない）
@@ -245,7 +241,17 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
     if (next > limit) setGateOpen(true);
   }, [viewCount, user, userPostCount]);
 
-  const handleSynapseCreated = useCallback(() => {
+  const handleSynapseCreated = useCallback((sourceUrl: string) => {
+    const publicUrl = normalizeSynapseEndpoint(sourceUrl);
+    setFocusUrl(publicUrl);
+    setMobileNavOpen(false);
+    if (typeof window !== "undefined") {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        params.set("focus", publicUrl);
+        window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+      } catch { /* noop */ }
+    }
     void refresh();
     if (user) setUserPostCount((prev) => prev + 1);
   }, [refresh, user]);
@@ -254,56 +260,26 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
     <AuthFeedbackProvider>
       <div className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-zinc-50 text-zinc-900 md:flex-row">
         {/* モバイルトップバー */}
-        <header className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-200/80 bg-white/95 px-3 py-2.5 backdrop-blur-sm md:hidden">
+        <header className="relative flex shrink-0 items-center border-b border-zinc-200/80 bg-white/95 px-3 py-2.5 backdrop-blur-sm md:hidden">
           <button
             type="button"
             aria-label="メニューを開く"
             onClick={() => setMobileNavOpen(true)}
-            className="rounded-lg p-2 text-zinc-600 transition hover:bg-zinc-100"
+            className="relative z-10 rounded-lg p-2 text-zinc-600 transition hover:bg-zinc-100"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <a href="/" className="flex flex-col items-center leading-none no-underline">
+          <a
+            href="/"
+            className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center leading-none no-underline"
+          >
             <span className="text-[7px] font-semibold uppercase tracking-[0.25em] text-indigo-500/80">Synapse</span>
             <span className="text-sm font-semibold text-zinc-900">Galaxy</span>
           </a>
-          <div
-            className="flex shrink-0 rounded-lg border border-zinc-200/90 bg-zinc-100/80 p-0.5"
-            role="group"
-            aria-label="表示モード"
-          >
-            <button
-              type="button"
-              aria-pressed={mobileViewMode === "feed"}
-              onClick={() => {
-                if (mobileViewMode !== "feed") toggleMobileViewMode();
-              }}
-              className={[
-                "rounded-md px-2 py-1 text-[10px] font-semibold transition",
-                mobileViewMode === "feed"
-                  ? "bg-white text-indigo-700 shadow-sm"
-                  : "text-zinc-500 hover:text-zinc-700",
-              ].join(" ")}
-            >
-              フィード
-            </button>
-            <button
-              type="button"
-              aria-pressed={mobileViewMode === "map"}
-              onClick={() => {
-                if (mobileViewMode !== "map") toggleMobileViewMode();
-              }}
-              className={[
-                "rounded-md px-2 py-1 text-[10px] font-semibold transition",
-                mobileViewMode === "map"
-                  ? "bg-white text-indigo-700 shadow-sm"
-                  : "text-zinc-500 hover:text-zinc-700",
-              ].join(" ")}
-            >
-              マップ
-            </button>
+          <div className="relative z-10 ml-auto">
+            <ViewModeToggle mode={mobileViewMode} onSelect={setViewMode} />
           </div>
         </header>
 
@@ -315,6 +291,9 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
           onSynapseCreated={handleSynapseCreated}
           mobileOpen={mobileNavOpen}
           onMobileOpenChange={setMobileNavOpen}
+          viewMode={mobileViewMode}
+          onViewModeChange={setViewMode}
+          showViewModeToggle={!!focusUrl}
         />
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -329,7 +308,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
               <div key="loading" className="flex h-full items-center justify-center text-sm text-zinc-400">読み込み中…</div>
             ) : focusUrl ? (
               <div key="graph" className="h-full w-full">
-                <div className={mobileViewMode === "feed" ? "h-full md:hidden" : "hidden"}>
+                <div className={mobileViewMode === "feed" ? "h-full" : "hidden"}>
                   <ScrollFeedView
                     focusUrl={focusUrl}
                     synapses={synapses}
@@ -337,7 +316,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
                     onFocusUrl={handleFocusUrl}
                   />
                 </div>
-                <div className="hidden h-full md:block">
+                <div className={mobileViewMode === "map" ? "h-full" : "hidden"}>
                   <GraphView
                     focusUrl={focusUrl}
                     synapses={synapses}

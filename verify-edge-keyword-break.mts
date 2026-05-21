@@ -17,12 +17,14 @@ dotenv.config();
 const edgeMod = new URL("./src/lib/gemini/edgeKeywordBreak.ts", import.meta.url).href;
 const displayMod = new URL("./src/lib/edgeKeywordDisplay.ts", import.meta.url).href;
 const { suggestEdgeKeywordLineBreak } = await import(edgeMod);
-const { sanitizeEdgeKeywordBreakOutput } = await import(displayMod);
+const { findEdgeKeywordTwoLineSplit, getEdgeKeywordPillLines, sanitizeEdgeKeywordBreakOutput } =
+  await import(displayMod);
 
 /** smart-input / suggest と同じ上限（src/lib/synapseLimits.ts と同期） */
 const TITLE_MAX = 30;
 
 const SAMPLE = "人類のために頭脳をフルベットする主人公";
+const COMMA_SAMPLE = "天才ゆえの繊細さが紡ぐ、薄氷を踏むような人生";
 
 function section(title: string) {
   console.log("\n──", title, "──");
@@ -40,6 +42,11 @@ async function main() {
   console.log("  suggest スキップ（1字以下・API 呼ばない）:", len < 2 ? "はい" : "いいえ");
 
   section("2. sanitize（モデル応答の模擬）");
+  const commaSplit = findEdgeKeywordTwoLineSplit(COMMA_SAMPLE);
+  console.log("  読点優先 split:", commaSplit ? `${JSON.stringify(commaSplit[0])} | ${JSON.stringify(commaSplit[1])}` : "なし");
+  const pillLines = getEdgeKeywordPillLines(COMMA_SAMPLE);
+  console.log("  pill 表示行:", pillLines.map((l: string) => JSON.stringify(l)).join(" / "));
+
   const same = sanitizeEdgeKeywordBreakOutput(SAMPLE, SAMPLE);
   console.log("  formatted=入力同一 → 戻り値に \\n があるか:", same.includes("\n") ? "あり" : "なし（期待どおり）");
 

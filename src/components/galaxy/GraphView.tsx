@@ -79,6 +79,14 @@ const POLE_LABEL_RADIUS = 520;
 /** N-hop neighborhood cap */
 const MAX_NODES = 60;
 
+/** Ring snap slot counts (per ring circumference). */
+const RING_SLOT_PRESETS = [3, 6, 9, 12, 18, 24, 36];
+
+/** Disconnected components: anchor distance from main hub (0,0). */
+const ISLAND_ANCHOR_RADIUS = LINK_DISTANCE * 1.75;
+/** Angular sectors for picking a vacant direction near the main hub. */
+const ISLAND_SECTOR_COUNT = 24;
+
 /** Pole label positions (px in canvas coords) */
 const POLES = {
   rika:   { x:  POLE_LABEL_RADIUS * 1.0,  y: -POLE_LABEL_RADIUS * 0.5 },
@@ -322,12 +330,6 @@ function isMobileLowZoomUi(zoom: number, baselineZoom: number | undefined, narro
   return narrow && zoomUiRatio(zoom, baselineZoom) <= MOBILE_LOW_ZOOM_UI_RATIO;
 }
 
-/** 低ズーム時の重なり判定用ズーム（counterScale 膨張で線から離れすぎるのを防ぐ） */
-function edgeKeywordPlacementZoom(zoom: number, baselineZoom: number | undefined, narrow: boolean): number {
-  if (!isMobileLowZoomUi(zoom, baselineZoom, narrow)) return zoom;
-  return Math.max(zoom, (baselineZoom ?? zoom) * MOBILE_LOW_ZOOM_UI_RATIO);
-}
-
 function clampOffsetFromPoint(
   mx: number,
   my: number,
@@ -341,10 +343,6 @@ function clampOffsetFromPoint(
   if (d <= maxDist || d < 1e-6) return { x, y };
   const s = maxDist / d;
   return { x: mx + dx * s, y: my + dy * s };
-}
-
-function edgeKeywordCounterScale(zoom: number): number {
-  return 1 / Math.max(zoom, 0.35);
 }
 
 function easeOutCubic(t: number): number {
@@ -491,6 +489,378 @@ function buildNeighborMap(
     neighbors.get(tK)!.add(sK);
   }
   return { neighbors, urlForKey };
+}
+
+function hashLayoutOffset(s: string): { ox: number; oy: number } {
+  let h1 = 0x811c9dc5 >>> 0;
+  let h2 = 0xdeadbeef >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 16777619) >>> 0;
+    h2 = Math.imul(h2 ^ c, 2246822519) >>> 0;
+  }
+  const ox = (((h1 & 0xffff) / 0xffff) - 0.5) * 100;
+  const oy = (((h2 & 0xffff) / 0xffff) - 0.5) * 100;
+  return { ox, oy };
+}
+
+function findConnectedComponents(allNorms: string[], neighbors: NeighborMap): string[][] {
+  const visited = new Set<string>();
+  const components: string[][] = [];
+  for (const start of [...allNorms].sort()) {
+    if (visited.has(start)) continue;
+    const comp: string[] = [];
+    const queue = [start];
+    visited.add(start);
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      comp.push(cur);
+      for (const nb of [...(neighbors.get(cur) ?? [])].sort()) {
+        if (!visited.has(nb)) {
+          visited.add(nb);
+          queue.push(nb);
+        }
+      }
+    }
+    comp.sort();
+    components.push(comp);
+  }
+  return components;
+}
+
+function pickComponentAnchor(
+  componentNorms: string[],
+  neighbors: NeighborMap,
+  synapses: SynapseRow[],
+  workMap: WorkEndpointMap,
+): string {
+  const compSet = new Set(componentNorms);
+  const likesByNorm = new Map<string, number>();
+  for (const s of synapses) {
+    const sK = endpointWorkKey(s.source_url, workMap);
+    const tK = endpointWorkKey(s.target_url, workMap);
+    if (!compSet.has(sK) && !compSet.has(tK)) continue;
+    const l = s.likes_count ?? 0;
+    if (compSet.has(sK)) likesByNorm.set(sK, (likesByNorm.get(sK) ?? 0) + l);
+    if (compSet.has(tK)) likesByNorm.set(tK, (likesByNorm.get(tK) ?? 0) + l);
+  }
+  let bestNorm = componentNorms[0];
+  let bestDeg = -1;
+  let bestLikes = -1;
+  for (const norm of componentNorms) {
+    const deg = [...(neighbors.get(norm) ?? [])].filter((nb) => compSet.has(nb)).length;
+    const likes = likesByNorm.get(norm) ?? 0;
+    if (
+      deg > bestDeg ||
+      (deg === bestDeg && likes > bestLikes) ||
+      (deg === bestDeg && likes === bestLikes && norm < bestNorm)
+    ) {
+      bestNorm = norm;
+      bestDeg = deg;
+      bestLikes = likes;
+    }
+  }
+  return bestNorm;
+}
+
+function angleToSectorIndex(angle: number, sectorCount: number): number {
+  const normalized = (angle + Math.PI) / (2 * Math.PI);
+  return Math.min(sectorCount - 1, Math.max(0, Math.floor(normalized * sectorCount)));
+}
+
+function computeAngularOccupancy(
+  positions: Iterable<{ x: number; y: number }>,
+  sectorCount: number,
+): number[] {
+  const occ = new Array<number>(sectorCount).fill(0);
+  for (const p of positions) {
+    const r = Math.hypot(p.x, p.y);
+    if (r < 1) continue;
+    const sector = angleToSectorIndex(Math.atan2(p.y, p.x), sectorCount);
+    const w = 1 + 2 / (1 + r / LINK_DISTANCE);
+    occ[sector] += w;
+    occ[(sector + 1) % sectorCount] += w * 0.3;
+    occ[(sector - 1 + sectorCount) % sectorCount] += w * 0.3;
+  }
+  return occ;
+}
+
+function preferredAngleForIsland(
+  anchorNorm: string,
+  synapses: SynapseRow[],
+  workMap: WorkEndpointMap,
+): number {
+  const profile = computeNodeDimProfile(anchorNorm, synapses, workMap);
+  if (profile) {
+    const xy = nodeGlobalScreenXY(profile);
+    if (Math.hypot(xy.x, xy.y) >= 0.01) return Math.atan2(xy.y, xy.x);
+  }
+  const anchor = computeAnchorForKey(anchorNorm, synapses, workMap);
+  if (Math.hypot(anchor.x, anchor.y) >= 0.01) return Math.atan2(anchor.y, anchor.x);
+  return 0;
+}
+
+function pickIslandSectorAngle(
+  occupancy: number[],
+  preferredAngle: number,
+  reservedSectors: Set<number>,
+): number {
+  const sectorCount = occupancy.length;
+  const preferredSector = angleToSectorIndex(preferredAngle, sectorCount);
+  let bestSector = preferredSector;
+  let bestScore = Infinity;
+  for (let i = 0; i < sectorCount; i++) {
+    if (reservedSectors.has(i)) continue;
+    const circDiff = Math.min(
+      Math.abs(i - preferredSector),
+      sectorCount - Math.abs(i - preferredSector),
+    );
+    const score = occupancy[i] * 10 + circDiff;
+    if (score < bestScore) {
+      bestScore = score;
+      bestSector = i;
+    }
+  }
+  reservedSectors.add(bestSector);
+  return (bestSector / sectorCount) * 2 * Math.PI - Math.PI + Math.PI / sectorCount;
+}
+
+function bfsHopsInComponent(
+  anchorNorm: string,
+  componentSet: Set<string>,
+  neighbors: NeighborMap,
+): Map<string, number> {
+  const hopByNorm = new Map<string, number>();
+  hopByNorm.set(anchorNorm, 0);
+  let frontier = [anchorNorm];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const cur of [...frontier].sort()) {
+      const curHop = hopByNorm.get(cur)!;
+      for (const nb of [...(neighbors.get(cur) ?? [])].sort()) {
+        if (!componentSet.has(nb) || hopByNorm.has(nb)) continue;
+        hopByNorm.set(nb, curHop + 1);
+        next.push(nb);
+      }
+    }
+    frontier = next;
+  }
+  return hopByNorm;
+}
+
+/** Snap nodes to hop rings around anchorNorm at local origin (0,0). */
+function snapComponentToRings(
+  componentNorms: string[],
+  anchorNorm: string,
+  neighbors: NeighborMap,
+): Map<string, { x: number; y: number }> {
+  const componentSet = new Set(componentNorms);
+  const hopByNorm = bfsHopsInComponent(anchorNorm, componentSet, neighbors);
+  const fallbackAngle = new Map<string, number>();
+  for (const norm of componentNorms) {
+    if (norm === anchorNorm) continue;
+    const { ox, oy } = hashLayoutOffset(norm);
+    fallbackAngle.set(norm, Math.atan2(oy, ox));
+  }
+
+  const ringGroups = new Map<number, string[]>();
+  for (const norm of componentNorms) {
+    const hop = hopByNorm.get(norm) ?? 1;
+    if (!ringGroups.has(hop)) ringGroups.set(hop, []);
+    ringGroups.get(hop)!.push(norm);
+  }
+
+  const snappedById = new Map<string, { x: number; y: number }>();
+  snappedById.set(anchorNorm, { x: 0, y: 0 });
+
+  function circularMean(angles: number[]): number {
+    if (angles.length === 0) return 0;
+    let sx = 0;
+    let sy = 0;
+    for (const a of angles) {
+      sx += Math.cos(a);
+      sy += Math.sin(a);
+    }
+    return Math.atan2(sy, sx);
+  }
+
+  const ringIndices = [...ringGroups.keys()].sort((a, b) => a - b);
+  for (const hop of ringIndices) {
+    if (hop === 0) continue;
+    const group = ringGroups.get(hop)!;
+    const ringR = hop * LINK_DISTANCE;
+    const N = group.length;
+    if (N === 0) continue;
+
+    type WithAngle = { norm: string; prefAngle: number; placedNeighborCount: number };
+    const withAngle: WithAngle[] = group.map((norm) => {
+      const ns = neighbors.get(norm);
+      const placedAngles: number[] = [];
+      if (ns) {
+        for (const nb of ns) {
+          if (!componentSet.has(nb)) continue;
+          const p = snappedById.get(nb);
+          if (p) placedAngles.push(Math.atan2(p.y, p.x));
+        }
+      }
+      let prefAngle = placedAngles.length > 0
+        ? circularMean(placedAngles)
+        : (fallbackAngle.get(norm) ?? 0);
+      if (!isFinite(prefAngle)) prefAngle = 0;
+      return { norm, prefAngle, placedNeighborCount: placedAngles.length };
+    });
+
+    withAngle.sort((a, b) => {
+      if (a.placedNeighborCount !== b.placedNeighborCount) {
+        return b.placedNeighborCount - a.placedNeighborCount;
+      }
+      if (a.prefAngle !== b.prefAngle) return a.prefAngle - b.prefAngle;
+      return a.norm.localeCompare(b.norm);
+    });
+
+    const idealSlotCount = Math.ceil((2 * Math.PI * ringR) / LINK_DISTANCE);
+    const slotCount = RING_SLOT_PRESETS.find((p) => p >= Math.max(idealSlotCount, N))
+      ?? RING_SLOT_PRESETS[RING_SLOT_PRESETS.length - 1];
+    const slotAngles: number[] = [];
+    for (let i = 0; i < slotCount; i++) {
+      slotAngles.push((i / slotCount) * 2 * Math.PI - Math.PI);
+    }
+
+    const takenSlots = new Set<number>();
+    for (const wa of withAngle) {
+      let bestSlot = -1;
+      let bestDist = Infinity;
+      for (let i = 0; i < slotCount; i++) {
+        if (takenSlots.has(i)) continue;
+        let d = Math.abs(wa.prefAngle - slotAngles[i]);
+        if (d > Math.PI) d = 2 * Math.PI - d;
+        if (d < bestDist) {
+          bestDist = d;
+          bestSlot = i;
+        }
+      }
+      if (bestSlot < 0) continue;
+      takenSlots.add(bestSlot);
+      const a = slotAngles[bestSlot];
+      snappedById.set(wa.norm, { x: Math.cos(a) * ringR, y: Math.sin(a) * ringR });
+    }
+  }
+
+  const BARYCENTER_ITERATIONS = 3;
+  for (let iter = 0; iter < BARYCENTER_ITERATIONS; iter++) {
+    for (const hop of ringIndices) {
+      if (hop === 0) continue;
+      const group = ringGroups.get(hop)!;
+      const ringR = hop * LINK_DISTANCE;
+      if (group.length === 0) continue;
+      const idealSlotCount = Math.ceil((2 * Math.PI * ringR) / LINK_DISTANCE);
+      const slotCount = RING_SLOT_PRESETS.find((p) => p >= Math.max(idealSlotCount, group.length))
+        ?? RING_SLOT_PRESETS[RING_SLOT_PRESETS.length - 1];
+      const slotAngles: number[] = [];
+      for (let i = 0; i < slotCount; i++) {
+        slotAngles.push((i / slotCount) * 2 * Math.PI - Math.PI);
+      }
+      const newPrefs = group.map((norm) => {
+        const ns = neighbors.get(norm);
+        const placedAngles: number[] = [];
+        if (ns) {
+          for (const nb of ns) {
+            if (!componentSet.has(nb)) continue;
+            const p = snappedById.get(nb);
+            if (p) placedAngles.push(Math.atan2(p.y, p.x));
+          }
+        }
+        let sx = 0;
+        let sy = 0;
+        for (const a of placedAngles) {
+          sx += Math.cos(a);
+          sy += Math.sin(a);
+        }
+        const angle = placedAngles.length > 0 ? Math.atan2(sy, sx) : 0;
+        return { norm, prefAngle: angle };
+      });
+      newPrefs.sort((a, b) => a.norm.localeCompare(b.norm));
+      const takenSlots = new Set<number>();
+      for (const wa of newPrefs) {
+        let bestSlot = -1;
+        let bestDist = Infinity;
+        for (let i = 0; i < slotCount; i++) {
+          if (takenSlots.has(i)) continue;
+          let d = Math.abs(wa.prefAngle - slotAngles[i]);
+          if (d > Math.PI) d = 2 * Math.PI - d;
+          if (d < bestDist) {
+            bestDist = d;
+            bestSlot = i;
+          }
+        }
+        if (bestSlot < 0) continue;
+        takenSlots.add(bestSlot);
+        const a = slotAngles[bestSlot];
+        snappedById.set(wa.norm, { x: Math.cos(a) * ringR, y: Math.sin(a) * ringR });
+      }
+    }
+  }
+
+  return snappedById;
+}
+
+function placeIslandComponents(
+  islandComponents: string[][],
+  neighbors: NeighborMap,
+  synapses: SynapseRow[],
+  workMap: WorkEndpointMap,
+  mainPositions: Map<string, { x: number; y: number }>,
+): Map<string, { x: number; y: number }> {
+  const result = new Map<string, { x: number; y: number }>();
+  if (islandComponents.length === 0) return result;
+
+  let occupancy = computeAngularOccupancy(mainPositions.values(), ISLAND_SECTOR_COUNT);
+  const reservedSectors = new Set<number>();
+
+  const sorted = [...islandComponents].sort((a, b) => {
+    const anchorA = pickComponentAnchor(a, neighbors, synapses, workMap);
+    const anchorB = pickComponentAnchor(b, neighbors, synapses, workMap);
+    return anchorA.localeCompare(anchorB);
+  });
+
+  for (const comp of sorted) {
+    if (comp.length === 0) continue;
+    const anchor = pickComponentAnchor(comp, neighbors, synapses, workMap);
+    const localPositions = snapComponentToRings(comp, anchor, neighbors);
+
+    let maxInternalHop = 0;
+    for (const norm of comp) {
+      const hop = Math.hypot(
+        (localPositions.get(norm)?.x ?? 0),
+        (localPositions.get(norm)?.y ?? 0),
+      ) / LINK_DISTANCE;
+      if (hop > maxInternalHop) maxInternalHop = hop;
+    }
+    const anchorRadius = ISLAND_ANCHOR_RADIUS + Math.max(0, maxInternalHop - 1) * LINK_DISTANCE * 0.15;
+
+    const prefAngle = preferredAngleForIsland(anchor, synapses, workMap);
+    const sectorAngle = pickIslandSectorAngle(occupancy, prefAngle, reservedSectors);
+    const ox = Math.cos(sectorAngle) * anchorRadius;
+    const oy = Math.sin(sectorAngle) * anchorRadius;
+
+    for (const norm of comp) {
+      const local = localPositions.get(norm);
+      if (!local) continue;
+      result.set(norm, { x: ox + local.x, y: oy + local.y });
+    }
+
+    const placedThisIsland: { x: number; y: number }[] = [];
+    for (const norm of comp) {
+      const p = result.get(norm);
+      if (p) placedThisIsland.push(p);
+    }
+    const islandOcc = computeAngularOccupancy(placedThisIsland, ISLAND_SECTOR_COUNT);
+    for (let i = 0; i < ISLAND_SECTOR_COUNT; i++) {
+      occupancy[i] += islandOcc[i];
+    }
+  }
+
+  return result;
 }
 
 function buildGraph(
@@ -689,13 +1059,9 @@ function GraphCard({
       <div className="relative flex min-h-[2.875rem] shrink-0 flex-col justify-center overflow-visible rounded-b-xl bg-white px-1.5 py-1">
         <p
           className="line-clamp-2 w-full overflow-hidden text-center text-[11px] font-medium leading-snug text-zinc-900 break-keep break-words"
-          style={{
-            transform: "scale(calc(1 / max(var(--graph-zoom, 1), 0.35)))",
-            transformOrigin: "top center",
-          }}
-          title={displayTitle}
+          title={loading ? undefined : displayTitle}
         >
-          {displayTitle}
+          {loading ? "読み込み中…" : displayTitle}
         </p>
       </div>
     </div>
@@ -716,7 +1082,7 @@ function edgeKeywordDisplayLines(keyword: string): string[] {
   return getEdgeKeywordPillLines(keyword);
 }
 
-/** キーワード pill のキャンバス座標サイズ（counterScale 適用前） */
+/** キーワード pill のキャンバス座標サイズ */
 function measureEdgeKeywordPill(keyword: string): { w: number; h: number; fontSize: number; lineHeight: number; lines: string[] } {
   const lines = edgeKeywordDisplayLines(keyword);
   const padX = 6;
@@ -737,30 +1103,26 @@ function measureEdgeKeywordPill(keyword: string): { w: number; h: number; fontSi
   return { w, h, fontSize, lineHeight, lines };
 }
 
-/** counterScale 後の世界座標における pill 半幅・半高（重なり回避用） */
-function edgeKeywordWorldHalfExtents(keyword: string, zoom: number, narrow: boolean): { hw: number; hh: number } {
+/** 世界座標における pill 半幅・半高（重なり回避用） */
+function edgeKeywordWorldHalfExtents(keyword: string, narrow: boolean): { hw: number; hh: number } {
   const { w, h } = measureEdgeKeywordPill(keyword);
-  const cs = edgeKeywordCounterScale(zoom);
   const margin = narrow ? 6 : 3;
-  return { hw: (w / 2) * cs + margin, hh: (h / 2) * cs + margin };
+  return { hw: w / 2 + margin, hh: h / 2 + margin };
 }
 
 function EdgeKeywordSvg({
   x,
   y,
-  zoom,
   keyword,
   stackedKeywords,
   onActivate,
 }: {
   x: number;
   y: number;
-  zoom: number;
   keyword: string;
   stackedKeywords?: string[];
   onActivate: () => void;
 }) {
-  const counterScale = edgeKeywordCounterScale(zoom);
   const { w, h, fontSize, lineHeight, lines } = measureEdgeKeywordPill(keyword);
   const textStartY = -((lines.length - 1) * lineHeight) / 2;
   const peeks = stackedKeywords ?? [];
@@ -768,7 +1130,7 @@ function EdgeKeywordSvg({
   return (
     <g
       data-edge-keyword-svg
-      transform={`translate(${x}, ${y}) scale(${counterScale})`}
+      transform={`translate(${x}, ${y})`}
       pointerEvents="all"
       style={{ cursor: "pointer" }}
       onPointerDown={(e) => e.stopPropagation()}
@@ -981,7 +1343,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     const el = contentLayerRef.current;
     if (el) {
       el.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) scale(${z})`;
-      el.style.setProperty("--graph-zoom", String(z));
       el.style.willChange = gesturingRef.current ? "transform" : "auto";
     }
   }, []);
@@ -1140,34 +1501,14 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
         frontier = next;
       }
     }
-    // Islands: unreachable nodes are placed at a sentinel ring far out.
-    const ISLAND_HOP = 6;
-    for (const norm of allNorms) {
-      if (!hopByNorm.has(norm)) hopByNorm.set(norm, ISLAND_HOP);
-    }
-
-    // Deterministic per-node offset derived from the norm string — replaces
-    // Math.random() so the layout is reproducible across reloads.
-    function hashOffset(s: string): { ox: number; oy: number } {
-      let h1 = 0x811c9dc5 >>> 0;
-      let h2 = 0xdeadbeef >>> 0;
-      for (let i = 0; i < s.length; i++) {
-        const c = s.charCodeAt(i);
-        h1 = Math.imul(h1 ^ c, 16777619) >>> 0;
-        h2 = Math.imul(h2 ^ c, 2246822519) >>> 0;
-      }
-      // Map to roughly -50..+50 px on each axis
-      const ox = (((h1 & 0xffff) / 0xffff) - 0.5) * 100;
-      const oy = (((h2 & 0xffff) / 0xffff) - 0.5) * 100;
-      return { ox, oy };
-    }
+    const mainNormSet = new Set(hopByNorm.keys());
 
     // Position cache is intentionally NOT used as a "preserve existing" mechanism.
     // Layout is fully recomputed from synapses every time the data changes — a
     // new work may shift other works to find a globally optimal arrangement.
     const worldNodes: GraphNode[] = allNorms.map((norm) => {
       const a = computeAnchorForKey(norm, synapses, workMap);
-      const { ox, oy } = hashOffset(norm);
+      const { ox, oy } = hashLayoutOffset(norm);
       const isStart = norm === startNorm;
       // Pin the start node to world (0,0) — algorithmic anchor.
       const initX = isStart ? 0 : (a.x + ox);
@@ -1235,12 +1576,19 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       return;
     }
 
+    const mainWorldNodes = worldNodes.filter((n) => mainNormSet.has(n.norm));
+    const mainWorldLinks = worldLinks.filter((l) => {
+      const sN = typeof l.source === "string" ? l.source : (l.source as GraphNode).norm;
+      const tN = typeof l.target === "string" ? l.target : (l.target as GraphNode).norm;
+      return mainNormSet.has(sN) && mainNormSet.has(tN);
+    });
+
     // ── Triangle detection: links that participate in a triangle (3 mutually
     //    connected nodes) get a stronger link strength. This makes tightly-
     //    interconnected groups clump together as a unit without us having to
     //    explicitly "detect clusters" — the structure emerges from the rule.
     const undirectedNeighborSets = new Map<string, Set<string>>();
-    for (const l of worldLinks) {
+    for (const l of mainWorldLinks) {
       const sN = typeof l.source === "string" ? l.source : (l.source as GraphNode).norm;
       const tN = typeof l.target === "string" ? l.target : (l.target as GraphNode).norm;
       if (!undirectedNeighborSets.has(sN)) undirectedNeighborSets.set(sN, new Set());
@@ -1249,7 +1597,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       undirectedNeighborSets.get(tN)!.add(sN);
     }
     const triangleLinkKeys = new Set<string>();
-    for (const l of worldLinks) {
+    for (const l of mainWorldLinks) {
       const sN = typeof l.source === "string" ? l.source : (l.source as GraphNode).norm;
       const tN = typeof l.target === "string" ? l.target : (l.target as GraphNode).norm;
       const sNeighbors = undirectedNeighborSets.get(sN)!;
@@ -1271,11 +1619,11 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     //    are 2.5× stronger so clusters clump. A weak uniform outward gravity
     //    spreads the graph so lines have natural breathing room.
     const sim = d3
-      .forceSimulation<GraphNode, GraphLink>(worldNodes)
+      .forceSimulation<GraphNode, GraphLink>(mainWorldNodes)
       .force(
         "link",
         d3
-          .forceLink<GraphNode, GraphLink>(worldLinks)
+          .forceLink<GraphNode, GraphLink>(mainWorldLinks)
           .id((d) => d.norm)
           .distance(LINK_DISTANCE)
           .strength((l) => {
@@ -1321,17 +1669,11 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     for (let i = 0; i < 700; i++) sim.tick();
 
     // 4) SNAP POST-PROCESS — cluster-aware slot assignment per ring.
-    //    - Each node's target ring = hop × LINK_DISTANCE (already enforced by
-    //      forceRadial; snap rounds to exact ring radius).
-    //    - Slot count per ring chosen from preset [3, 6, 9, 12, 18, 24, 36].
-    //    - Slot ordering: children of the same parent → adjacent slots
-    //      (prevents zigzag); triangle members get additional adjacency boost.
     const RADIUS_STEP = LINK_DISTANCE;
-    const RING_SLOT_PRESETS = [3, 6, 9, 12, 18, 24, 36];
 
-    // Group nodes by ring (= hop)
+    // Group main-component nodes by ring (= hop)
     const ringGroups = new Map<number, GraphNode[]>();
-    for (const n of worldNodes) {
+    for (const n of mainWorldNodes) {
       const hop = hopByNorm.get(n.norm) ?? 1;
       if (!ringGroups.has(hop)) ringGroups.set(hop, []);
       ringGroups.get(hop)!.push(n);
@@ -1477,6 +1819,23 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
             y: Math.sin(a) * ringR,
           });
         }
+      }
+    }
+
+    // ── Disconnected components: near main hub, in the least-occupied sector.
+    if (startNorm) {
+      const islandComponents = findConnectedComponents(allNorms, neighbors).filter(
+        (comp) => !comp.includes(startNorm),
+      );
+      const islandPositions = placeIslandComponents(
+        islandComponents,
+        neighbors,
+        synapses,
+        workMap,
+        snappedById,
+      );
+      for (const [norm, pos] of islandPositions) {
+        snappedById.set(norm, pos);
       }
     }
 
@@ -1681,7 +2040,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
   }, [getMobilePanBoundsNow, applyCameraDom, smoothCameraTo]);
 
   const wheelTimerRef = useRef<number | null>(null);
-  const onWheel = useCallback((e: React.WheelEvent) => {
+  const onWheelZoom = useCallback((e: WheelEvent) => {
     e.preventDefault();
     const el = viewportRef.current;
     if (!el) return;
@@ -1702,6 +2061,14 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     setZoom(z1);
     if (wheelTimerRef.current) window.clearTimeout(wheelTimerRef.current);
   }, [applyCameraDom]);
+
+  // React onWheel は passive のため preventDefault が効かず、トラックパッド pinch でページ全体が拡大する
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    el.addEventListener("wheel", onWheelZoom, { passive: false });
+    return () => el.removeEventListener("wheel", onWheelZoom);
+  }, [onWheelZoom]);
 
   const viewportLocalFromClient = useCallback((clientX: number, clientY: number) => {
     const rect = viewportRef.current?.getBoundingClientRect();
@@ -1918,13 +2285,18 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     el.addEventListener("touchmove", onTouchMove, { passive: false });
     el.addEventListener("touchend", onTouchEnd, { passive: false });
     el.addEventListener("touchcancel", onTouchEnd, { passive: false });
-    el.addEventListener("gesturestart", (e) => e.preventDefault());
-    el.addEventListener("gesturechange", (e) => e.preventDefault());
+    const blockSafariGesture = (e: Event) => e.preventDefault();
+    el.addEventListener("gesturestart", blockSafariGesture, { passive: false });
+    el.addEventListener("gesturechange", blockSafariGesture, { passive: false });
+    el.addEventListener("gestureend", blockSafariGesture, { passive: false });
     return () => {
       el.removeEventListener("touchstart", onTouchStart);
       el.removeEventListener("touchmove", onTouchMove);
       el.removeEventListener("touchend", onTouchEnd);
       el.removeEventListener("touchcancel", onTouchEnd);
+      el.removeEventListener("gesturestart", blockSafariGesture);
+      el.removeEventListener("gesturechange", blockSafariGesture);
+      el.removeEventListener("gestureend", blockSafariGesture);
     };
   }, [applyPinchZoom, finishMobileTouchGesture, resolveMobilePan, scheduleCameraDom]);
 
@@ -2167,7 +2539,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
   const [detailOgpLoading, setDetailOgpLoading] = useState(false);
   const [detailImgError, setDetailImgError] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!detailOpen) return;
     let cancelled = false;
     setDescExpanded(false);
@@ -2176,6 +2548,8 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     const cached = ogpMiniCache.get(detailUrl);
     if (cached?.title || cached?.imageUrl) {
       setDetailOgp({ title: cached.title, imageUrl: cached.imageUrl, description: null, siteName: null });
+    } else {
+      setDetailOgp(null);
     }
     async function load(refresh: boolean) {
       const qs = new URLSearchParams({ url: detailUrl });
@@ -2279,7 +2653,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     const narrowViewport = isNarrowGraphViewport(viewport.w);
     const baselineZoom = cameraUIBaseline?.zoom;
     const mobileLowZoom = isMobileLowZoomUi(zoom, baselineZoom, narrowViewport);
-    const placementZoom = edgeKeywordPlacementZoom(zoom, baselineZoom, narrowViewport);
     const CARD_PAD = 6;
     const cardRects = nodes
       .map((n) => ({ norm: n.norm, cx: n.x, cy: n.y, hw: CARD_W / 2 + CARD_PAD, hh: CARD_H / 2 + CARD_PAD }));
@@ -2341,7 +2714,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       if (l.keyword) {
         const { hw: labelHw, hh: labelHh } = edgeKeywordWorldHalfExtents(
           l.keyword,
-          placementZoom,
           narrowViewport,
         );
         const perpX = -uy;
@@ -2409,7 +2781,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
             key={`${l.synapse.id}-${l.keyword}`}
             x={labelX}
             y={labelY}
-            zoom={zoom}
             keyword={l.keyword}
             stackedKeywords={l.stackedKeywords}
             onActivate={() => {
@@ -2434,7 +2805,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       <div
         ref={viewportRef}
         className="relative h-full w-full overflow-hidden"
-        onWheel={onWheel}
         onPointerDown={onBgPointerDown}
         onPointerMove={onBgPointerMove}
         onPointerUp={onBgPointerUp}
@@ -2453,8 +2823,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
             transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
             transformOrigin: "0 0",
             pointerEvents: "none",
-            // GraphCard タイトルの counterScale（applyCameraDom でも同期）
-            ["--graph-zoom" as string]: zoom,
           }}
         >
           {/* SVG edges — covers a big virtual area */}
@@ -2747,7 +3115,9 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
                   })()}
                   <section className="rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2.5 sm:px-3.5 sm:py-3">
                     <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">概要</h3>
-                    {detailOgp?.description?.trim() ? (
+                    {detailOgpLoading ? (
+                      <p className="text-sm leading-relaxed text-zinc-400">読み込み中…</p>
+                    ) : detailOgp?.description?.trim() ? (
                       <>
                         <div className={["relative overflow-hidden", descExpanded ? "" : "max-h-[5.5em]"].join(" ")}>
                           <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{detailOgp.description.trim()}</p>
@@ -2817,7 +3187,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
                       </ul>
                     </section>
                   ) : null}
-                  <p className="break-all text-[11px] leading-snug text-zinc-500">{detailUrl}</p>
                 </div>
               </div>
             </motion.div>
