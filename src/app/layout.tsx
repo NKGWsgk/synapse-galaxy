@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { getGoogleClientId } from "@/lib/googleSignIn";
 import { buildSiteMetadata, buildWebsiteJsonLd } from "@/lib/siteMetadata";
 import "./globals.css";
 
@@ -31,6 +32,13 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full min-h-0 antialiased`}
     >
       <body className="flex h-full min-h-0 min-w-0 flex-col overflow-x-hidden">
+        <script
+          id="sg-public-config"
+          type="application/json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({ googleClientId: getGoogleClientId() }),
+          }}
+        />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(buildWebsiteJsonLd()) }}

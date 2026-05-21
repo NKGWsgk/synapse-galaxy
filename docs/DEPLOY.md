@@ -56,6 +56,7 @@ git push -u origin main
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon / publishable key |
 | `SUPABASE_SERVICE_ROLE_KEY` | service_role / secret key |
 | `GEMINI_API_KEY` | Gemini API key |
+| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Google OAuth Client ID（Supabase Auth → Google と同じ値） |
 | `NEXT_PUBLIC_AMAZON_AFFILIATE_TAG` | `nkgw07-22`（または任意） |
 | `AMAZON_AFFILIATE_TAG` | 同上 |
 | `NEXT_PUBLIC_UNEXT_AFFILIATE_CID` | U-NEXT ASP の `cid`（任意） |
@@ -83,10 +84,16 @@ Supabase Dashboard → **Authentication** → **URL Configuration**:
 
 ### 3b. Google OAuth 設定（使ってる場合）
 
-Google Cloud Console → OAuth 2.0 Client → 「承認済みのリダイレクト URI」に追加:
-- `https://<YOUR-SUPABASE-REF>.supabase.co/auth/v1/callback`
+**Supabase Dashboard → Authentication → Providers → Google**
+- Enable ON
+- Client ID / Client Secret を Google Cloud Console の Web クライアントと同じ値に
 
-（既に Supabase 側で OAuth プロバイダ設定済みなら不要）
+**Google Cloud Console → OAuth 2.0 Client**
+- **承認済みの JavaScript 生成元**（GIS ボタン用・重要）:
+  - `http://localhost:3000`
+  - `https://synapse-galaxy.vercel.app`（本番 URL）
+- **承認済みのリダイレクト URI**（Supabase 連携用）:
+  - `https://<YOUR-SUPABASE-REF>.supabase.co/auth/v1/callback`
 
 ### 3c. likes_count trigger（未実施なら）
 

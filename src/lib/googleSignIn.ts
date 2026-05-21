@@ -5,6 +5,23 @@ export function getGoogleClientId(): string | null {
   return id || null;
 }
 
+/** layout の JSON script から Client ID を読む（クライアント専用フォールバック） */
+export function readGoogleClientIdFromPage(): string | null {
+  if (typeof document === "undefined") return null;
+  try {
+    const el = document.getElementById("sg-public-config");
+    if (!el?.textContent) return null;
+    const parsed = JSON.parse(el.textContent) as { googleClientId?: string };
+    return parsed.googleClientId?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveGoogleClientId(explicit?: string | null): string | null {
+  return explicit?.trim() || readGoogleClientIdFromPage() || getGoogleClientId();
+}
+
 export async function signInWithGoogleIdToken(
   supabase: SupabaseClient,
   credential: string,

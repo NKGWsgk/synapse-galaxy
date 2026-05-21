@@ -4,7 +4,7 @@ import Script from "next/script";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import { generateGoogleAuthNonce } from "@/lib/googleAuthNonce";
-import { getGoogleClientId, signInWithGoogleIdToken } from "@/lib/googleSignIn";
+import { resolveGoogleClientId, signInWithGoogleIdToken } from "@/lib/googleSignIn";
 
 type CredentialResponse = { credential: string };
 
@@ -59,7 +59,7 @@ export function GoogleSignInButton({
   onSuccess,
   onError,
 }: Props) {
-  const clientId = clientIdProp ?? getGoogleClientId();
+  const clientId = resolveGoogleClientId(clientIdProp);
   const [scriptReady, setScriptReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);

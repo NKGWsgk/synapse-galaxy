@@ -328,7 +328,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
             {!synapsesLoaded ? (
               <div key="loading" className="flex h-full items-center justify-center text-sm text-zinc-400">読み込み中…</div>
             ) : focusUrl ? (
-              <motion.div key="graph" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="h-full w-full">
+              <div key="graph" className="h-full w-full">
                 <div className={mobileViewMode === "feed" ? "h-full md:hidden" : "hidden"}>
                   <ScrollFeedView
                     focusUrl={focusUrl}
@@ -337,7 +337,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
                     onFocusUrl={handleFocusUrl}
                   />
                 </div>
-                <div className={mobileViewMode === "map" ? "h-full md:block" : "hidden md:block"}>
+                <div className="hidden h-full md:block">
                   <GraphView
                     focusUrl={focusUrl}
                     synapses={synapses}
@@ -346,11 +346,11 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
                     mobileMenuOpen={mobileNavOpen}
                   />
                 </div>
-              </motion.div>
+              </div>
             ) : (
-              <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="h-full w-full">
+              <div key="empty" className="h-full w-full">
                 <EmptyGalaxy onOpenPost={scrollToPostPanel} />
-              </motion.div>
+              </div>
             )}
           </AnimatePresence>
         </main>
