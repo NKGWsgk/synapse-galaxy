@@ -160,6 +160,15 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   const [gateOpen, setGateOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileViewMode, setMobileViewMode] = useState<ViewMode>("feed");
+  const [isMdUp, setIsMdUp] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const sync = () => setIsMdUp(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -308,7 +317,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
               <div key="loading" className="flex h-full items-center justify-center text-sm text-zinc-400">読み込み中…</div>
             ) : focusUrl ? (
               <div key="graph" className="h-full w-full">
-                <div className={mobileViewMode === "feed" ? "h-full" : "hidden"}>
+                <div className={mobileViewMode === "feed" ? "h-full md:hidden" : "hidden"}>
                   <ScrollFeedView
                     focusUrl={focusUrl}
                     synapses={synapses}
@@ -316,8 +325,21 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
                     onFocusUrl={handleFocusUrl}
                   />
                 </div>
-                <div className={mobileViewMode === "map" ? "h-full" : "hidden"}>
+                <div
+                  className={
+                    mobileViewMode === "map"
+                      ? "h-full md:block"
+                      : "hidden md:block md:h-full"
+                  }
+                >
                   <GraphView
+                    key={
+                      isMdUp
+                        ? "desktop-graph"
+                        : mobileViewMode === "map"
+                          ? `mobile-map-${focusUrl}`
+                          : "mobile-graph-hidden"
+                    }
                     focusUrl={focusUrl}
                     synapses={synapses}
                     workMap={workEndpoints}
