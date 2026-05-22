@@ -121,111 +121,19 @@ function graphViewportFitZoomMultiplier(viewportW: number): number {
   return isNarrowGraphViewport(viewportW) ? 1 : 1.1;
 }
 
-/** スマホ初回: フォーカス＋上下各1作品のコンパクト枠（枚数の目安） */
-const MOBILE_COMPACT_STACK_WORKS = 3;
-const MOBILE_COMPACT_STACK_GAP_Y = 40;
+/** スマホ初回: 縦方向に3作品が収まる倍率（この値を UI 100% とする） */
+const MOBILE_FIT_VISIBLE_WORKS_Y = 3;
+const MOBILE_FIT_CARD_GAP_Y = 36;
 
 /** スマホで UI 100% 比がこの値以下のとき、キーワードを線の近くに留める */
 const MOBILE_LOW_ZOOM_UI_RATIO = 0.8;
 
-/** スマホ: パン境界の余白・ラバーバンド・慣性スクロール */
-const MOBILE_PAN_EDGE_PAD_PX = 40;
-const MOBILE_PAN_ANCHOR_SLACK_PX = 36;
-const MOBILE_PAN_RUBBER_RESISTANCE = 0.34;
-const MOBILE_PAN_MAX_OVERSCROLL_PX = 64;
-const MOBILE_PAN_MOMENTUM_FRICTION = 0.91;
-const MOBILE_PAN_MOMENTUM_MIN_SPEED = 0.35;
-const MOBILE_PAN_SNAP_MS = 280;
-
-type PanBounds = { minX: number; maxX: number; minY: number; maxY: number };
-
-function computeNeighborhoodBBox(
-  nodeNorms: Iterable<string>,
-  worldPos: Map<string, { x: number; y: number }>,
-): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  const hx = CARD_W / 2;
-  const hy = CARD_H / 2;
-  const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
-  for (const norm of nodeNorms) {
-    const p = worldPos.get(norm);
-    if (!p) continue;
-    expandBBoxWithCard(p.x, p.y, hx, hy, bbox);
-  }
-  if (!isFinite(bbox.minX)) return null;
-  return bbox;
-}
-
-function computeMobilePanBounds(
-  bbox: { minX: number; minY: number; maxX: number; maxY: number },
-  zoom: number,
-  vw: number,
-  vh: number,
-  anchorPan: { x: number; y: number } | null,
-): PanBounds {
-  const hx = CARD_W / 2;
-  const hy = CARD_H / 2;
-  const pad = graphViewportFitPadding(vw) + MOBILE_PAN_EDGE_PAD_PX;
-  const cxw = vw / 2;
-  const cyw = vh / 2;
-  const bcx = (bbox.minX + bbox.maxX) / 2;
-  const bcy = (bbox.minY + bbox.maxY) / 2;
-
-  const contentScreenW = (bbox.maxX - bbox.minX + CARD_W) * zoom;
-  const contentScreenH = (bbox.maxY - bbox.minY + CARD_H) * zoom;
-
-  let minX: number;
-  let maxX: number;
-  let minY: number;
-  let maxY: number;
-
-  if (contentScreenW <= vw - pad * 2) {
-    const anchorX = anchorPan?.x ?? -bcx * zoom;
-    minX = anchorX - MOBILE_PAN_ANCHOR_SLACK_PX;
-    maxX = anchorX + MOBILE_PAN_ANCHOR_SLACK_PX;
-  } else {
-    minX = pad - cxw - (bbox.minX - hx) * zoom;
-    maxX = (vw - pad) - cxw - (bbox.maxX + hx) * zoom;
-  }
-
-  if (contentScreenH <= vh - pad * 2) {
-    const anchorY = anchorPan?.y ?? -bcy * zoom;
-    minY = anchorY - MOBILE_PAN_ANCHOR_SLACK_PX;
-    maxY = anchorY + MOBILE_PAN_ANCHOR_SLACK_PX;
-  } else {
-    minY = pad - cyw - (bbox.minY - hy) * zoom;
-    maxY = (vh - pad) - cyw - (bbox.maxY + hy) * zoom;
-  }
-
-  return { minX, maxX, minY, maxY };
-}
-
-function clampPanToBounds(pan: { x: number; y: number }, bounds: PanBounds): { x: number; y: number } {
-  return {
-    x: Math.min(bounds.maxX, Math.max(bounds.minX, pan.x)),
-    y: Math.min(bounds.maxY, Math.max(bounds.minY, pan.y)),
-  };
-}
-
-function applyMobilePanRubberBand(pan: { x: number; y: number }, bounds: PanBounds): { x: number; y: number } {
-  const rubber = (value: number, min: number, max: number) => {
-    if (value < min) {
-      const overshoot = (value - min) * MOBILE_PAN_RUBBER_RESISTANCE;
-      return min + Math.max(-MOBILE_PAN_MAX_OVERSCROLL_PX, overshoot);
-    }
-    if (value > max) {
-      const overshoot = (value - max) * MOBILE_PAN_RUBBER_RESISTANCE;
-      return max + Math.min(MOBILE_PAN_MAX_OVERSCROLL_PX, overshoot);
-    }
-    return value;
-  };
-  return {
-    x: rubber(pan.x, bounds.minX, bounds.maxX),
-    y: rubber(pan.y, bounds.minY, bounds.maxY),
-  };
-}
-
-function panNeedsMobileSnap(pan: { x: number; y: number }, bounds: PanBounds): boolean {
-  return pan.x < bounds.minX || pan.x > bounds.maxX || pan.y < bounds.minY || pan.y > bounds.maxY;
+/** スマホ初回: フォーカス中心に縦3枚分の高さが viewport に収まる倍率 */
+function graphMobileVerticalFitZoom(viewportH: number, pad: number): number {
+  const spanY =
+    MOBILE_FIT_VISIBLE_WORKS_Y * CARD_H +
+    (MOBILE_FIT_VISIBLE_WORKS_Y - 1) * MOBILE_FIT_CARD_GAP_Y;
+  return (viewportH - pad * 2) / spanY;
 }
 
 function expandBBoxWithCard(
@@ -239,86 +147,6 @@ function expandBBoxWithCard(
   if (y - hy < box.minY) box.minY = y - hy;
   if (x + hx > box.maxX) box.maxX = x + hx;
   if (y + hy > box.maxY) box.maxY = y + hy;
-}
-
-/**
- * 1-hop のうちフォーカスの真上・真下に最も近い作品を各1つ選ぶ。
- * 横ばかりのときは距離が近い順に上下へ振り分ける。
- */
-function pickMobileVerticalNeighbors(
-  hubPos: { x: number; y: number },
-  oneHop: Array<{ x: number; y: number }>,
-): { above: { x: number; y: number } | null; below: { x: number; y: number } | null } {
-  const dyThreshold = 12;
-  let above: { x: number; y: number } | null = null;
-  let aboveDy = -Infinity;
-  let below: { x: number; y: number } | null = null;
-  let belowDy = Infinity;
-
-  for (const p of oneHop) {
-    const dy = p.y - hubPos.y;
-    if (dy < -dyThreshold && dy > aboveDy) {
-      above = p;
-      aboveDy = dy;
-    } else if (dy > dyThreshold && dy < belowDy) {
-      below = p;
-      belowDy = dy;
-    }
-  }
-
-  const byDist = [...oneHop].sort(
-    (a, b) =>
-      Math.hypot(a.x - hubPos.x, a.y - hubPos.y) - Math.hypot(b.x - hubPos.x, b.y - hubPos.y),
-  );
-
-  if (!above || !below) {
-    for (const p of byDist) {
-      const dy = p.y - hubPos.y;
-      if (!above && p !== below && dy <= dyThreshold) above = p;
-      else if (!below && p !== above && dy >= -dyThreshold) below = p;
-      if (above && below) break;
-    }
-  }
-  if (!above || !below) {
-    for (const p of byDist) {
-      if (p === above || p === below) continue;
-      if (!above) above = p;
-      else if (!below) below = p;
-      break;
-    }
-  }
-
-  return { above, below };
-}
-
-/** スマホ初回: フォーカス＋上1＋下1 の縦コンパクトフィット（1-hop 全体は必須ではない） */
-function computeMobileCompactFitZoom(
-  hubPos: { x: number; y: number },
-  oneHop: Array<{ x: number; y: number }>,
-  viewportW: number,
-  viewportH: number,
-  pad: number,
-): number {
-  const hx = CARD_W / 2;
-  const hy = CARD_H / 2;
-  const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
-  expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
-
-  const { above, below } = pickMobileVerticalNeighbors(hubPos, oneHop);
-  if (above) expandBBoxWithCard(above.x, above.y, hx, hy, bbox);
-  if (below) expandBBoxWithCard(below.x, below.y, hx, hy, bbox);
-
-  const slotY = CARD_H + MOBILE_COMPACT_STACK_GAP_Y;
-  if (!above) bbox.minY = Math.min(bbox.minY, hubPos.y - hy - slotY);
-  if (!below) bbox.maxY = Math.max(bbox.maxY, hubPos.y + hy + slotY);
-
-  const minStackH =
-    CARD_H * MOBILE_COMPACT_STACK_WORKS +
-    MOBILE_COMPACT_STACK_GAP_Y * (MOBILE_COMPACT_STACK_WORKS - 1);
-  const bboxH = Math.max(minStackH, bbox.maxY - bbox.minY);
-  const zY = (viewportH - pad * 2) / bboxH;
-  const zX = (viewportW - pad * 2) / (CARD_W * 1.15);
-  return Math.min(zX, zY);
 }
 
 function zoomUiRatio(zoom: number, baselineZoom: number | undefined): number {
@@ -1406,10 +1234,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     () => buildGraph(focusUrl, synapses, workMap),
     [focusUrl, synapses, workMap],
   );
-  const mobileNeighborhoodNormsRef = useRef<string[]>([]);
-  useEffect(() => {
-    mobileNeighborhoodNormsRef.current = builtNodes.map((n) => n.norm);
-  }, [builtNodes]);
 
   // Global world layout — positions for every node in the DB. Computed once
   // per `synapses` identity via d3-force pre-settled simulation. Clicking a
@@ -1925,20 +1749,9 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       const narrow = isNarrowGraphViewport(viewport.w);
 
       if (narrow) {
-        const oneHop: Array<{ x: number; y: number }> = [];
-        for (const n of builtNodes) {
-          if (!n.isHub && n.hop !== 1) continue;
-          const p = worldPos.get(n.norm);
-          if (p) oneHop.push(p);
-        }
-        const zCompact = computeMobileCompactFitZoom(
-          hubPos,
-          oneHop,
-          viewport.w,
-          viewport.h,
-          PAD,
-        );
-        targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zCompact * 1.06));
+        const zY3 = graphMobileVerticalFitZoom(viewport.h, PAD);
+        const zX = (viewport.w - PAD * 2) / (CARD_W * 1.15);
+        targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(zX, zY3)));
       } else {
         const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
         expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
@@ -1970,75 +1783,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
   }, [focusUrl, builtNodes, viewport.w, viewport.h, smoothCameraTo]);
 
   // ── Pan / Zoom interactions ─────────────────────────────────────────────────
-  const touchPanSampleRef = useRef<Array<{ x: number; y: number; t: number }>>([]);
-  const touchGestureKindRef = useRef<"pan" | "pinch" | null>(null);
-
-  const getMobilePanBoundsNow = useCallback((): PanBounds | null => {
-    const el = viewportRef.current;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    if (!isNarrowGraphViewport(rect.width)) return null;
-    const bbox = computeNeighborhoodBBox(mobileNeighborhoodNormsRef.current, worldPositionsRef.current);
-    if (!bbox) return null;
-    return computeMobilePanBounds(
-      bbox,
-      zoomRef.current,
-      rect.width,
-      rect.height,
-      cameraUIBaselineRef.current?.pan ?? null,
-    );
-  }, []);
-
-  const resolveMobilePan = useCallback((nextPan: { x: number; y: number }, rubber: boolean) => {
-    const bounds = getMobilePanBoundsNow();
-    if (!bounds) return nextPan;
-    return rubber ? applyMobilePanRubberBand(nextPan, bounds) : clampPanToBounds(nextPan, bounds);
-  }, [getMobilePanBoundsNow]);
-
-  const snapMobilePanToBounds = useCallback((fromPan: { x: number; y: number }) => {
-    const bounds = getMobilePanBoundsNow();
-    if (!bounds) {
-      setPan(fromPan);
-      return;
-    }
-    const target = clampPanToBounds(fromPan, bounds);
-    if (Math.hypot(target.x - fromPan.x, target.y - fromPan.y) < 0.5) {
-      applyCameraDom(target, zoomRef.current);
-      setPan(target);
-      return;
-    }
-    smoothCameraTo(target, zoomRef.current, MOBILE_PAN_SNAP_MS);
-  }, [getMobilePanBoundsNow, smoothCameraTo, applyCameraDom]);
-
-  const runMobilePanMomentum = useCallback((velocity: { x: number; y: number }) => {
-    const bounds = getMobilePanBoundsNow();
-    if (!bounds) return;
-    cameraAnimTokenRef.current += 1;
-    const token = cameraAnimTokenRef.current;
-    let v = { ...velocity };
-    let p = { ...panRef.current };
-    const z = zoomRef.current;
-
-    const step = () => {
-      if (token !== cameraAnimTokenRef.current) return;
-      p = { x: p.x + v.x, y: p.y + v.y };
-      v = { x: v.x * MOBILE_PAN_MOMENTUM_FRICTION, y: v.y * MOBILE_PAN_MOMENTUM_FRICTION };
-
-      if (panNeedsMobileSnap(p, bounds)) {
-        smoothCameraTo(clampPanToBounds(p, bounds), z, MOBILE_PAN_SNAP_MS);
-        return;
-      }
-
-      applyCameraDom(p, z);
-      if (Math.hypot(v.x, v.y) < MOBILE_PAN_MOMENTUM_MIN_SPEED) {
-        setPan(p);
-        return;
-      }
-      requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  }, [getMobilePanBoundsNow, applyCameraDom, smoothCameraTo]);
-
   const wheelTimerRef = useRef<number | null>(null);
   const onWheelZoom = useCallback((e: WheelEvent) => {
     e.preventDefault();
@@ -2099,54 +1843,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     });
   }, []);
 
-  const finishMobileTouchGesture = useCallback(() => {
-    const kind = touchGestureKindRef.current;
-    touchGestureKindRef.current = null;
-    gesturingRef.current = false;
-
-    const currentPan = { ...panRef.current };
-    const bounds = getMobilePanBoundsNow();
-
-    if (kind === "pan") {
-      const samples = touchPanSampleRef.current;
-      touchPanSampleRef.current = [];
-      let velocity: { x: number; y: number } | null = null;
-      if (samples.length >= 2) {
-        const first = samples[0]!;
-        const last = samples[samples.length - 1]!;
-        const dt = last.t - first.t;
-        if (dt >= 16) {
-          const vx = ((last.x - first.x) / dt) * 16;
-          const vy = ((last.y - first.y) / dt) * 16;
-          if (Math.hypot(vx, vy) >= MOBILE_PAN_MOMENTUM_MIN_SPEED) {
-            velocity = { x: vx, y: vy };
-          }
-        }
-      }
-      if (velocity) {
-        runMobilePanMomentum(velocity);
-        return;
-      }
-      if (bounds && panNeedsMobileSnap(currentPan, bounds)) {
-        snapMobilePanToBounds(currentPan);
-        return;
-      }
-    } else if (kind === "pinch") {
-      touchPanSampleRef.current = [];
-      if (bounds && panNeedsMobileSnap(currentPan, bounds)) {
-        snapMobilePanToBounds(currentPan);
-        return;
-      }
-    } else {
-      touchPanSampleRef.current = [];
-    }
-
-    requestAnimationFrame(() => {
-      setPan({ ...panRef.current });
-      setZoom(zoomRef.current);
-    });
-  }, [getMobilePanBoundsNow, runMobilePanMomentum, snapMobilePanToBounds]);
-
   const touchActiveRef = useRef(false);
 
   const applyPinchZoom = useCallback((midClientX: number, midClientY: number, dist: number) => {
@@ -2158,11 +1854,11 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     const z1 = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinch.zoom0 * (dist / pinch.dist0)));
     const worldX = (local.x - pinch.pan0.x - cxw) / pinch.zoom0;
     const worldY = (local.y - pinch.pan0.y - cyw) / pinch.zoom0;
-    scheduleCameraDom(
+    applyCameraDom(
       { x: local.x - cxw - worldX * z1, y: local.y - cyw - worldY * z1 },
       z1,
     );
-  }, [scheduleCameraDom, viewportLocalFromClient]);
+  }, [applyCameraDom, viewportLocalFromClient]);
 
   // iOS: Touch Events で 2 本指ピンチ（Pointer Events + capture では取れないことが多い）
   useEffect(() => {
@@ -2201,8 +1897,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
         touchActiveRef.current = true;
         gesturingRef.current = true;
         cameraAnimTokenRef.current += 1;
-        touchGestureKindRef.current = "pinch";
-        touchPanSampleRef.current = [];
         initPinchFromTouches(e.touches);
         return;
       }
@@ -2211,10 +1905,8 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       touchActiveRef.current = true;
       gesturingRef.current = true;
       cameraAnimTokenRef.current += 1;
-      touchGestureKindRef.current = "pan";
       pinchRef.current = null;
       const t = e.touches[0];
-      touchPanSampleRef.current = [{ x: t.clientX, y: t.clientY, t: performance.now() }];
       bgDragRef.current = {
         startX: t.clientX,
         startY: t.clientY,
@@ -2227,7 +1919,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       if (!touchActiveRef.current) return;
       e.preventDefault();
       if (e.touches.length >= 2) {
-        touchGestureKindRef.current = "pinch";
         if (!pinchRef.current) initPinchFromTouches(e.touches);
         const dist = Math.hypot(
           e.touches[1].clientX - e.touches[0].clientX,
@@ -2241,26 +1932,17 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       const d = bgDragRef.current;
       if (!d || e.touches.length !== 1) return;
       const t = e.touches[0];
-      const rawPan = {
-        x: d.panX + (t.clientX - d.startX),
-        y: d.panY + (t.clientY - d.startY),
-      };
-      scheduleCameraDom(resolveMobilePan(rawPan, true), zoomRef.current);
-      const now = performance.now();
-      const samples = touchPanSampleRef.current;
-      samples.push({ x: t.clientX, y: t.clientY, t: now });
-      while (samples.length > 6 || (samples.length > 1 && now - samples[0]!.t > 120)) {
-        samples.shift();
-      }
+      applyCameraDom(
+        { x: d.panX + (t.clientX - d.startX), y: d.panY + (t.clientY - d.startY) },
+        zoomRef.current,
+      );
     };
 
     const onTouchEnd = (e: TouchEvent) => {
       if (!touchActiveRef.current) return;
       if (e.touches.length === 1) {
         pinchRef.current = null;
-        touchGestureKindRef.current = "pan";
         const t = e.touches[0];
-        touchPanSampleRef.current = [{ x: t.clientX, y: t.clientY, t: performance.now() }];
         bgDragRef.current = {
           startX: t.clientX,
           startY: t.clientY,
@@ -2270,7 +1952,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
         return;
       }
       if (e.touches.length >= 2) {
-        touchGestureKindRef.current = "pinch";
         initPinchFromTouches(e.touches);
         bgDragRef.current = null;
         return;
@@ -2278,7 +1959,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       touchActiveRef.current = false;
       bgDragRef.current = null;
       pinchRef.current = null;
-      finishMobileTouchGesture();
+      commitCameraState();
     };
 
     el.addEventListener("touchstart", onTouchStart, { passive: false });
@@ -2298,7 +1979,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       el.removeEventListener("gesturechange", blockSafariGesture);
       el.removeEventListener("gestureend", blockSafariGesture);
     };
-  }, [applyPinchZoom, finishMobileTouchGesture, resolveMobilePan, scheduleCameraDom]);
+  }, [applyPinchZoom, applyCameraDom, commitCameraState]);
 
   const onBgPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === "touch") return;
