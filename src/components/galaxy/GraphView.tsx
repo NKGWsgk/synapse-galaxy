@@ -208,6 +208,30 @@ function computeMobileCompactFitZoom(
   return Math.min(zX, zY);
 }
 
+/**
+ * スマホ初回ランディング専用: 1-hop 近傍全体の bbox 中心を画面中央に置く pan。
+ * 倍率は computeMobileCompactFitZoom のまま。フォーカス移動後は hub 中心に戻す。
+ */
+function computeMobileInitialLandingPan(
+  hubPos: { x: number; y: number },
+  oneHop: Array<{ x: number; y: number }>,
+  zoom: number,
+): { x: number; y: number } {
+  const hx = CARD_W / 2;
+  const hy = CARD_H / 2;
+  const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
+  for (const p of oneHop) expandBBoxWithCard(p.x, p.y, hx, hy, bbox);
+
+  const { above, below } = pickMobileVerticalNeighbors(hubPos, oneHop);
+  if (!above) bbox.minY = Math.min(bbox.minY, hubPos.y - hy - MOBILE_FIT_SLOT_Y);
+  if (!below) bbox.maxY = Math.max(bbox.maxY, hubPos.y + hy + MOBILE_FIT_SLOT_Y);
+
+  const cx = (bbox.minX + bbox.maxX) / 2;
+  const cy = (bbox.minY + bbox.maxY) / 2;
+  return { x: -cx * zoom, y: -cy * zoom };
+}
+
 function expandBBoxWithCard(
   x: number,
   y: number,
@@ -1808,8 +1832,8 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     if (!hubPos) return;
 
     const stored = cameraUIBaselineRef.current;
-    let targetZoom: number;
-    let targetPan: { x: number; y: number };
+    let targetZoom: number = zoomRef.current;
+    let targetPan: { x: number; y: number } = { ...panRef.current };
 
     if (stored && stored.zoom > 1e-9) {
       targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, stored.zoom));
@@ -1834,6 +1858,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
             computeMobileCompactFitZoom(hubPos, oneHop, viewport.w, viewport.h, PAD),
           ),
         );
+        targetPan = computeMobileInitialLandingPan(hubPos, oneHop, targetZoom);
       } else {
         const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
         expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
@@ -1852,8 +1877,8 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
           ZOOM_MIN,
           Math.min(ZOOM_MAX, Math.min(zX, zY) * graphViewportFitZoomMultiplier(viewport.w)),
         );
+        targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
       }
-      targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
       cameraUIBaselineRef.current = { pan: targetPan, zoom: targetZoom };
       setCameraUIBaseline(cameraUIBaselineRef.current);
     }
