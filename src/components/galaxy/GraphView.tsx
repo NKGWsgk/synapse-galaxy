@@ -64,8 +64,8 @@ const NODE_RADIUS = 92;
 /** Link target distance — distance between connected nodes.
  *  Sized so 12 cards at 30° spacing don't overlap (tangential gap at 290 was
  *  marginal at diagonal angles) AND so a 2-line label fits along the spoke:
- *  visible line = LINK_DISTANCE - 2 * cardHalfW = 340 - 140 = 200px. */
-const LINK_DISTANCE = 340;
+ *  visible line = LINK_DISTANCE - 2 * cardHalfW = 323 - 140 = 183px. */
+const LINK_DISTANCE = 323;
 
 /** Dim anchor radius. Direction is determined by the node's dim profile; distance
  *  is capped at LINK_DISTANCE so the dim force only nudges direction, never pushes
@@ -1039,16 +1039,19 @@ function EdgeKeywordSvg({
   y,
   keyword,
   stackedKeywords,
+  narrow,
   onActivate,
 }: {
   x: number;
   y: number;
   keyword: string;
   stackedKeywords?: string[];
+  narrow?: boolean;
   onActivate: () => void;
 }) {
   const { w, h, fontSize, lineHeight, lines } = measureEdgeKeywordPill(keyword);
-  const textStartY = -((lines.length - 1) * lineHeight) / 2;
+  // 狭い viewport では dominantBaseline=middle の CJK 描画が上にズレやすい（計測で ~fontSize*0.12）
+  const textStartY = -((lines.length - 1) * lineHeight) / 2 + (narrow ? fontSize * 0.12 : 0);
   const peeks = stackedKeywords ?? [];
 
   return (
@@ -1574,7 +1577,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       )
       // ── Radial anchor: each node is pulled toward radius (hop × LINK_DISTANCE).
       //    Combined with the pinned start at (0,0) and link force, this makes
-      //    1-hop sit at ring 1 (340), 2-hop at ring 2 (680), etc.
+      //    1-hop sit at ring 1 (323), 2-hop at ring 2 (646), etc.
       .force(
         "radial",
         d3.forceRadial<GraphNode>((n) => (hopByNorm.get(n.norm) ?? 1) * LINK_DISTANCE, 0, 0)
@@ -2571,6 +2574,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
             y={labelY}
             keyword={l.keyword}
             stackedKeywords={l.stackedKeywords}
+            narrow={narrowViewport}
             onActivate={() => {
               setKeywordNote({
                 keyword: l.keyword!,
@@ -2673,7 +2677,8 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
         <div
           data-graph-zoom-toolbar
           className={[
-            "pointer-events-auto absolute right-3 top-3 z-[120] flex flex-col items-stretch overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-lg md:right-5 md:top-5",
+            "pointer-events-auto absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-3 z-[120] flex flex-row items-center overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-lg",
+            "md:bottom-auto md:right-5 md:top-5 md:flex-col md:items-stretch",
             mobileMenuOpen ? "max-md:hidden" : "",
           ].join(" ")}
           onPointerDown={(e) => e.stopPropagation()}
@@ -2715,7 +2720,8 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
               <path d="M16 16l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
-          <div className="h-px bg-zinc-200" aria-hidden />
+          <div className="w-px self-stretch bg-zinc-200 md:hidden" aria-hidden />
+          <div className="hidden h-px bg-zinc-200 md:block" aria-hidden />
           <button
             type="button"
             onClick={() => {
@@ -2752,7 +2758,8 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
               <path d="M16 16l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
-          <div className="h-px bg-zinc-200" aria-hidden />
+          <div className="w-px self-stretch bg-zinc-200 md:hidden" aria-hidden />
+          <div className="hidden h-px bg-zinc-200 md:block" aria-hidden />
           {/* Zoom % display (also clickable to reset zoom to 1) */}
           <button
             type="button"
@@ -2768,7 +2775,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
               const pan1 = panForZoomTowardViewportCenter(z0, panRef.current, z1, viewport.w, viewport.h);
               smoothCameraTo(pan1, z1, CAMERA_UI_SMOOTH_MS);
             }}
-            className="flex h-8 w-11 items-center justify-center text-[11px] font-semibold tabular-nums text-zinc-500 transition hover:bg-indigo-50 hover:text-indigo-700"
+            className="flex h-11 w-11 items-center justify-center text-[11px] font-semibold tabular-nums text-zinc-500 transition hover:bg-indigo-50 hover:text-indigo-700"
             title={
               cameraUIBaseline
                 ? "初期の表示領域（100%）に戻す"
@@ -2782,7 +2789,8 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
               ? `${Math.round((zoom / cameraUIBaseline.zoom) * 100)}%`
               : `${Math.round(zoom * 100)}%`}
           </button>
-          <div className="h-px bg-zinc-200" aria-hidden />
+          <div className="w-px self-stretch bg-zinc-200 md:hidden" aria-hidden />
+          <div className="hidden h-px bg-zinc-200 md:block" aria-hidden />
           {/* 初期100% と同じ向き／範囲へ戻す（旧「全体フィット」の枠線アイコン） */}
           <button
             type="button"
