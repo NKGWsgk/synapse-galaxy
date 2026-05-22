@@ -121,19 +121,91 @@ function graphViewportFitZoomMultiplier(viewportW: number): number {
   return isNarrowGraphViewport(viewportW) ? 1 : 1.1;
 }
 
-/** スマホ初回: 縦方向に3作品が収まる倍率（この値を UI 100% とする） */
-const MOBILE_FIT_VISIBLE_WORKS_Y = 3;
-const MOBILE_FIT_CARD_GAP_Y = 36;
+/** 1-hop 配置距離（LINK_DISTANCE）に合わせた縦スロット */
+const MOBILE_FIT_SLOT_Y = LINK_DISTANCE;
+/** フォーカス＋上下1作品の最小縦幅（世界座標 px） */
+const MOBILE_FIT_MIN_STACK_H = 2 * LINK_DISTANCE + CARD_H;
 
 /** スマホで UI 100% 比がこの値以下のとき、キーワードを線の近くに留める */
 const MOBILE_LOW_ZOOM_UI_RATIO = 0.8;
 
-/** スマホ初回: フォーカス中心に縦3枚分の高さが viewport に収まる倍率 */
-function graphMobileVerticalFitZoom(viewportH: number, pad: number): number {
-  const spanY =
-    MOBILE_FIT_VISIBLE_WORKS_Y * CARD_H +
-    (MOBILE_FIT_VISIBLE_WORKS_Y - 1) * MOBILE_FIT_CARD_GAP_Y;
-  return (viewportH - pad * 2) / spanY;
+/**
+ * 1-hop のうちフォーカスの真上・真下に最も近い作品を各1つ選ぶ。
+ * 横ばかりのときは距離が近い順に上下へ振り分ける。
+ */
+function pickMobileVerticalNeighbors(
+  hubPos: { x: number; y: number },
+  oneHop: Array<{ x: number; y: number }>,
+): { above: { x: number; y: number } | null; below: { x: number; y: number } | null } {
+  const dyThreshold = 12;
+  let above: { x: number; y: number } | null = null;
+  let aboveDy = -Infinity;
+  let below: { x: number; y: number } | null = null;
+  let belowDy = Infinity;
+
+  for (const p of oneHop) {
+    const dy = p.y - hubPos.y;
+    if (dy < -dyThreshold && dy > aboveDy) {
+      above = p;
+      aboveDy = dy;
+    } else if (dy > dyThreshold && dy < belowDy) {
+      below = p;
+      belowDy = dy;
+    }
+  }
+
+  const byDist = [...oneHop].sort(
+    (a, b) =>
+      Math.hypot(a.x - hubPos.x, a.y - hubPos.y) - Math.hypot(b.x - hubPos.x, b.y - hubPos.y),
+  );
+
+  if (!above || !below) {
+    for (const p of byDist) {
+      const dy = p.y - hubPos.y;
+      if (!above && p !== below && dy <= dyThreshold) above = p;
+      else if (!below && p !== above && dy >= -dyThreshold) below = p;
+      if (above && below) break;
+    }
+  }
+  if (!above || !below) {
+    for (const p of byDist) {
+      if (p === above || p === below) continue;
+      if (!above) above = p;
+      else if (!below) below = p;
+      break;
+    }
+  }
+
+  return { above, below };
+}
+
+/**
+ * スマホ初回: フォーカス＋上下1作品（計3枚）が縦に収まる倍率を世界座標から算出。
+ * この値を UI 100% とする（余白倍率は掛けない）。
+ */
+function computeMobileCompactFitZoom(
+  hubPos: { x: number; y: number },
+  oneHop: Array<{ x: number; y: number }>,
+  viewportW: number,
+  viewportH: number,
+  pad: number,
+): number {
+  const hx = CARD_W / 2;
+  const hy = CARD_H / 2;
+  const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
+
+  const { above, below } = pickMobileVerticalNeighbors(hubPos, oneHop);
+  if (above) expandBBoxWithCard(above.x, above.y, hx, hy, bbox);
+  if (below) expandBBoxWithCard(below.x, below.y, hx, hy, bbox);
+
+  if (!above) bbox.minY = Math.min(bbox.minY, hubPos.y - hy - MOBILE_FIT_SLOT_Y);
+  if (!below) bbox.maxY = Math.max(bbox.maxY, hubPos.y + hy + MOBILE_FIT_SLOT_Y);
+
+  const bboxH = Math.max(MOBILE_FIT_MIN_STACK_H, bbox.maxY - bbox.minY);
+  const zY = (viewportH - pad * 2) / bboxH;
+  const zX = (viewportW - pad * 2) / (CARD_W * 1.15);
+  return Math.min(zX, zY);
 }
 
 function expandBBoxWithCard(
@@ -1749,9 +1821,19 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       const narrow = isNarrowGraphViewport(viewport.w);
 
       if (narrow) {
-        const zY3 = graphMobileVerticalFitZoom(viewport.h, PAD);
-        const zX = (viewport.w - PAD * 2) / (CARD_W * 1.15);
-        targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(zX, zY3)));
+        const oneHop: Array<{ x: number; y: number }> = [];
+        for (const n of builtNodes) {
+          if (!n.isHub && n.hop !== 1) continue;
+          const p = worldPos.get(n.norm);
+          if (p) oneHop.push(p);
+        }
+        targetZoom = Math.max(
+          ZOOM_MIN,
+          Math.min(
+            ZOOM_MAX,
+            computeMobileCompactFitZoom(hubPos, oneHop, viewport.w, viewport.h, PAD),
+          ),
+        );
       } else {
         const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
         expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
