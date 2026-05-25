@@ -110,7 +110,12 @@ async function unifyShareSlugForCanonicalId(
   canonicalId: string,
   slug: string,
 ) {
-  await supabase.from("contents_metadata").update({ share_slug: slug }).eq("canonical_id", canonicalId);
+  const { error } = await supabase
+    .from("contents_metadata")
+    .update({ share_slug: slug })
+    .eq("canonical_id", canonicalId);
+  if (error?.message?.includes("share_slug")) return;
+  if (error) throw new Error(error.message);
 }
 
 async function ensureShareSlugForRow(
@@ -135,11 +140,7 @@ async function ensureShareSlugForRow(
   });
   if (!resolved) return slug;
 
-  try {
-    await unifyShareSlugForCanonicalId(supabase, row.canonical_id, resolved);
-  } catch (err) {
-    if (!(err instanceof Error && err.message.includes("share_slug"))) throw err;
-  }
+  await unifyShareSlugForCanonicalId(supabase, row.canonical_id, resolved);
   return resolved;
 }
 
