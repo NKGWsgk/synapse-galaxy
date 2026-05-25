@@ -145,6 +145,17 @@ async function ensureShareSlugForRow(
   return resolved;
 }
 
+/** 1 作品の share_slug を Gemini で確保（オンデマンド API 用）。 */
+export async function ensureShareSlugForUrl(
+  supabase: SupabaseClient,
+  rawUrl: string,
+): Promise<string | null> {
+  const existing = await findMetadataByUrl(supabase, rawUrl);
+  if (!existing) return null;
+  const pureTitle = extractPureWorkTitle(existing.title, existing.url) ?? existing.title;
+  return ensureShareSlugForRow(supabase, existing, pureTitle, false);
+}
+
 function pickSearchNeedle(title: string): string | null {
   const cleaned = title
     .replace(/^【[^】]+】/g, " ")
@@ -395,7 +406,7 @@ export async function backfillMissingShareSlugs(
 export async function backfillShareSlugsForEndpointUrls(
   supabase: SupabaseClient,
   endpointUrls: string[],
-  limit = 8,
+  limit = 999,
 ): Promise<number> {
   const normUrls = Array.from(
     new Set(endpointUrls.map((u) => normalizeSynapseEndpoint(u)).filter(Boolean)),

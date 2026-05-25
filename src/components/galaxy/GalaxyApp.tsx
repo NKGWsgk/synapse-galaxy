@@ -14,6 +14,7 @@ import { createBrowserClient } from "@/lib/supabase/browser";
 import { GoogleSignInButton } from "./GoogleSignInButton";
 import { findSynapseById } from "@/lib/synapseKeywordNote";
 import { decodeFocusParam, syncFocusParamInSearchParams } from "@/lib/focusShareUrl";
+import { isAcceptableShareSlug } from "@/lib/workShareSlug";
 import { readSynapseIdFromLocation, writeSynapseIdToUrl } from "@/lib/synapseShareUrl";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import type { WorkEndpointMap } from "@/lib/workResolve";
@@ -316,6 +317,28 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
         window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
       }
     } catch { /* noop */ }
+  }, [focusUrl, workEndpoints, synapsesLoaded]);
+
+  // share_slug 未生成の作品は API で Gemini 生成 → URL を英語スラッグに統一
+  useEffect(() => {
+    if (!focusUrl || !synapsesLoaded) return;
+    const norm = normalizeSynapseEndpoint(focusUrl);
+    const info = workEndpoints[norm];
+    if (info?.shareSlug && isAcceptableShareSlug(info.shareSlug)) return;
+
+    let cancelled = false;
+    void fetch(`/api/work/share-slug?url=${encodeURIComponent(focusUrl)}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j: { slug?: string | null }) => {
+        if (cancelled || !j.slug?.trim() || !isAcceptableShareSlug(j.slug.trim())) return;
+        setWorkEndpoints((prev) => {
+          const cur = prev[norm];
+          if (!cur) return prev;
+          return { ...prev, [norm]: { ...cur, shareSlug: j.slug!.trim() } };
+        });
+      })
+      .catch(() => { /* noop */ });
+    return () => { cancelled = true; };
   }, [focusUrl, workEndpoints, synapsesLoaded]);
 
   return (

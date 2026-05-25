@@ -20,6 +20,11 @@ export function normalizeSynapseEndpoint(raw: string): string {
     const u = new URL(cleaned);
     if (!isAmazonUrl(cleaned)) {
       u.hash = "";
+      if (u.hostname.toLowerCase().includes("netflix.com")) {
+        const id = u.pathname.match(/\/(?:title|watch)\/(\d+)/)?.[1];
+        if (id) return `https://www.netflix.com/title/${id}`;
+        u.search = "";
+      }
       return u.toString();
     }
     const host = u.hostname.toLowerCase().replace(/^www\./, "");

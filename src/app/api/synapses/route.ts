@@ -51,7 +51,7 @@ export async function GET(req: Request) {
 
     try {
       const service = createServiceClient();
-      await backfillShareSlugsForEndpointUrls(service, endpointUrls, 12);
+      await backfillShareSlugsForEndpointUrls(service, endpointUrls);
     } catch (e) {
       console.error("[synapses/share_slug backfill]", e);
     }

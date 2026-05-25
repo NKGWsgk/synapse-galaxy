@@ -1,5 +1,4 @@
 import { amazonAsinFromUrl, isAmazonUrl } from "@/lib/amazon";
-import { detectContentPlatform } from "@/lib/contentPlatform";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import type { WorkEndpointMap } from "@/lib/workResolve";
 import { isAcceptableShareSlug, shareSlugKey } from "@/lib/workShareSlug";
@@ -11,6 +10,17 @@ const YOUTUBE_MUSIC = /^ym\/([A-Za-z0-9_-]{11})$/;
 const NETFLIX = /^n\/(\d+)$/;
 const SPOTIFY = /^s\/(track|album|episode|show)\/([A-Za-z0-9]+)$/;
 const SLUG_DISAMBIG = /^(.+)~([0-9a-f]{6})$/i;
+
+/** 旧来の ?focus= 形式（英語スラッグ以外）。 */
+export function isLegacyFocusParam(raw: string): boolean {
+  const t = raw.trim();
+  if (!t) return false;
+  if (t.startsWith("http://") || t.startsWith("https://")) return true;
+  if (AMAZON_ASIN_ONLY.test(t) || AMAZON_COM.test(t)) return true;
+  if (YOUTUBE.test(t) || YOUTUBE_MUSIC.test(t) || NETFLIX.test(t) || SPOTIFY.test(t)) return true;
+  if (isAmazonUrl(t)) return true;
+  return false;
+}
 
 function youtubeVideoId(url: URL): string | null {
   if (url.hostname === "youtu.be") {
@@ -24,54 +34,13 @@ function youtubeVideoId(url: URL): string | null {
 }
 
 function netflixTitleId(url: URL): string | null {
-  const m = url.pathname.match(/\/title\/(\d+)/);
+  const m = url.pathname.match(/\/(?:title|watch)\/(\d+)/);
   return m?.[1] ?? null;
 }
 
 function spotifyPath(url: URL): string | null {
   const m = url.pathname.match(/\/(track|album|episode|show)\/([A-Za-z0-9]+)/);
   return m ? `${m[1]}/${m[2]}` : null;
-}
-
-function encodePlatformFallback(normalizedUrl: string): string {
-  const norm = normalizeSynapseEndpoint(normalizedUrl);
-  try {
-    const u = new URL(norm);
-    const platform = detectContentPlatform(norm);
-
-    if (platform === "amazon") {
-      const asin = amazonAsinFromUrl(norm);
-      if (!asin) return norm;
-      const host = u.hostname.toLowerCase();
-      if (host.includes("amazon.com") && !host.includes("amazon.co.jp")) {
-        return `a.com/${asin.toUpperCase()}`;
-      }
-      return asin.toUpperCase();
-    }
-
-    if (platform === "youtube") {
-      const vid = youtubeVideoId(u);
-      if (vid) return `y/${vid}`;
-    }
-
-    if (platform === "youtube_music") {
-      const vid = youtubeVideoId(u);
-      if (vid) return `ym/${vid}`;
-    }
-
-    if (platform === "netflix") {
-      const id = netflixTitleId(u);
-      if (id) return `n/${id}`;
-    }
-
-    if (platform === "spotify") {
-      const path = spotifyPath(u);
-      if (path) return `s/${path}`;
-    }
-  } catch {
-    /* fall through */
-  }
-  return norm;
 }
 
 function workInfoForUrl(normalizedUrl: string, workMap?: WorkEndpointMap) {
@@ -114,28 +83,33 @@ function lookupWorkBySlug(raw: string, workMap: WorkEndpointMap): string | null 
   return [...matches].sort()[0]!;
 }
 
-/** ブラウザ URL の `?focus=` 用。作品名スラッグ（ASCII）優先、なければプラットフォーム ID。 */
-export function encodeFocusParam(normalizedUrl: string, workMap?: WorkEndpointMap): string {
+/**
+ * ブラウザ URL の `?focus=` 用。
+ * ルール: 英語 kebab-case スラッグのみ。未生成時は null（ASIN / y/ / 生 URL は書かない）。
+ */
+export function encodeFocusParam(
+  normalizedUrl: string,
+  workMap?: WorkEndpointMap,
+): string | null {
   const info = workInfoForUrl(normalizedUrl, workMap);
   const baseSlug = info ? shareSlugForWork(info) : null;
-  if (baseSlug) {
-    const key = shareSlugKey(baseSlug);
-    let collision = false;
-    for (const other of Object.values(workMap ?? {})) {
-      if (!info || other.workId === info.workId) continue;
-      const otherSlug = shareSlugForWork(other);
-      if (otherSlug && shareSlugKey(otherSlug) === key) {
-        collision = true;
-        break;
-      }
+  if (!baseSlug) return null;
+
+  const key = shareSlugKey(baseSlug);
+  let collision = false;
+  for (const other of Object.values(workMap ?? {})) {
+    if (!info || other.workId === info.workId) continue;
+    const otherSlug = shareSlugForWork(other);
+    if (otherSlug && shareSlugKey(otherSlug) === key) {
+      collision = true;
+      break;
     }
-    if (collision && info) {
-      const suffix = info.workId.replace(/-/g, "").slice(0, 6).toLowerCase();
-      return `${baseSlug}~${suffix}`;
-    }
-    return baseSlug;
   }
-  return encodePlatformFallback(normalizedUrl);
+  if (collision && info) {
+    const suffix = info.workId.replace(/-/g, "").slice(0, 6).toLowerCase();
+    return `${baseSlug}~${suffix}`;
+  }
+  return baseSlug;
 }
 
 /** `?focus=` を正規化済み作品 URL に復元（スラッグ・旧形式すべて対応）。 */
@@ -184,6 +158,7 @@ export function decodeFocusParam(raw: string, workMap?: WorkEndpointMap): string
   return trimmed;
 }
 
+/** ?focus= を英語スラッグに同期。スラッグ未生成時は旧形式 param を削除するだけ。 */
 export function syncFocusParamInSearchParams(
   params: URLSearchParams,
   publicUrl: string,
@@ -191,6 +166,13 @@ export function syncFocusParamInSearchParams(
 ): boolean {
   const encoded = encodeFocusParam(publicUrl, workMap);
   const current = params.get("focus");
+
+  if (!encoded) {
+    if (!current) return false;
+    params.delete("focus");
+    return true;
+  }
+
   if (current === encoded) return false;
   params.set("focus", encoded);
   return true;
