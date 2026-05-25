@@ -2,7 +2,7 @@ import { amazonAsinFromUrl, isAmazonUrl } from "@/lib/amazon";
 import { detectContentPlatform } from "@/lib/contentPlatform";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import type { WorkEndpointMap } from "@/lib/workResolve";
-import { shareSlugKey, workTitleToShareSlug } from "@/lib/workShareSlug";
+import { isAcceptableShareSlug, shareSlugKey } from "@/lib/workShareSlug";
 
 const AMAZON_ASIN_ONLY = /^[A-Z0-9]{10}$/i;
 const AMAZON_COM = /^a\.com\/([A-Z0-9]{10})$/i;
@@ -80,9 +80,10 @@ function workInfoForUrl(normalizedUrl: string, workMap?: WorkEndpointMap) {
   return workMap[norm] ?? null;
 }
 
-function shareSlugForWork(info: { shareSlug?: string | null; title?: string | null }): string | null {
-  if (info.shareSlug?.trim()) return info.shareSlug.trim();
-  return workTitleToShareSlug(info.title ?? "");
+function shareSlugForWork(info: { shareSlug?: string | null }): string | null {
+  const slug = info.shareSlug?.trim();
+  if (!slug || !isAcceptableShareSlug(slug)) return null;
+  return slug;
 }
 
 /** 英語スラッグ → 代表 URL（同名は workId 接尾辞で区別）。 */

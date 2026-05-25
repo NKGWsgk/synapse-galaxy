@@ -1,5 +1,5 @@
 import { generateShareSlugWithGemini } from "@/lib/gemini/shareSlug";
-import { slugifyAscii, workTitleToShareSlug } from "@/lib/workShareSlug";
+import { isAcceptableShareSlug, isLikelyKatakanaRomajiSlug, slugifyAscii } from "@/lib/workShareSlug";
 
 export type ShareSlugInput = {
   title: string | null;
@@ -10,22 +10,39 @@ export type ShareSlugInput = {
   titleChanged?: boolean;
 };
 
-/** Gemini → ルールベース fallback の順で共有スラッグを決める。 */
+function needsRegeneration(existingSlug: string | null | undefined, titleChanged: boolean): boolean {
+  if (titleChanged) return true;
+  if (!existingSlug?.trim()) return true;
+  return isLikelyKatakanaRomajiSlug(existingSlug.trim());
+}
+
+/** Gemini のみで英語原題スラッグを決める（カタカナ音写フォールバックなし）。 */
 export async function resolveShareSlug(input: ShareSlugInput): Promise<string | null> {
   const title = input.title?.trim() ?? "";
   if (!title) return null;
 
-  if (input.existingSlug?.trim() && !input.titleChanged) {
-    return slugifyAscii(input.existingSlug.trim(), 40);
+  const existing = input.existingSlug?.trim() ?? null;
+  if (existing && !needsRegeneration(existing, input.titleChanged ?? false)) {
+    return slugifyAscii(existing, 40);
   }
 
-  const gemini = await generateShareSlugWithGemini({
+  let gemini = await generateShareSlugWithGemini({
     title,
     description: input.description,
     url: input.url,
     siteName: input.siteName,
   });
-  if (gemini.ok) return gemini.slug;
 
-  return workTitleToShareSlug(title);
+  if (!gemini.ok || !isAcceptableShareSlug(gemini.slug)) {
+    gemini = await generateShareSlugWithGemini(
+      { title, description: input.description, url: input.url, siteName: input.siteName },
+      { strictEnglish: true },
+    );
+  }
+
+  if (gemini.ok && isAcceptableShareSlug(gemini.slug)) {
+    return gemini.slug;
+  }
+
+  return null;
 }

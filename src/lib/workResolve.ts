@@ -6,6 +6,7 @@ import { mergePurchaseLinks, purchaseLinksFromUrl, type PurchaseLinks } from "@/
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { computeWorkFingerprint } from "@/lib/workIdentity";
 import { resolveShareSlug } from "@/lib/shareSlugResolve";
+import { isLikelyKatakanaRomajiSlug } from "@/lib/workShareSlug";
 
 export type ContentMetadataLite = {
   url: string;
@@ -128,7 +129,7 @@ async function ensureShareSlugForRow(
   if (!slug) {
     slug = await findShareSlugByCanonicalId(supabase, row.canonical_id);
   }
-  if (slug && !titleChanged) return slug;
+  if (slug && !titleChanged && !isLikelyKatakanaRomajiSlug(slug)) return slug;
 
   const resolved = await resolveShareSlug({
     title: pureTitle ?? row.title,
@@ -378,7 +379,8 @@ export async function backfillMissingShareSlugs(
   let done = 0;
   for (const rec of byWorkId.values()) {
     if (done >= limit) break;
-    if (rec.share_slug?.trim()) continue;
+    const existing = rec.share_slug?.trim();
+    if (existing && !isLikelyKatakanaRomajiSlug(existing)) continue;
     const pureTitle = extractPureWorkTitle(rec.title, rec.url) ?? rec.title;
     const slug = await ensureShareSlugForRow(supabase, rec, pureTitle, false);
     if (slug) {
