@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { GoogleAnalytics } from "@next/third-parties/google";
 import { Geist, Geist_Mono } from "next/font/google";
+import { getGaMeasurementId } from "@/lib/googleAnalytics";
 import { getGoogleClientId } from "@/lib/googleSignIn";
 import { buildSiteMetadata, buildWebsiteJsonLd } from "@/lib/siteMetadata";
 import "./globals.css";
@@ -28,6 +30,8 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const gaMeasurementId = getGaMeasurementId();
+
   return (
     <html
       lang="ja"
@@ -47,6 +51,7 @@ export default function RootLayout({
         />
         {children}
       </body>
+      {gaMeasurementId ? <GoogleAnalytics gaId={gaMeasurementId} /> : null}
     </html>
   );
 }

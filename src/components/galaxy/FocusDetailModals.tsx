@@ -15,6 +15,13 @@ import { endpointDisplayUrl, endpointWorkKey, type WorkEndpointMap } from "@/lib
 import { withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import {
+  buildKeywordNoteForSynapse,
+  findSynapseById,
+  type KeywordNotePayload,
+  type SynapseShareRequest,
+} from "@/lib/synapseKeywordNote";
+import { readSynapseIdFromLocation } from "@/lib/synapseShareUrl";
+import {
   ConnectionWorksLine,
   LikeButton,
   OgpTileMedia,
@@ -23,15 +30,7 @@ import {
 
 export type GraphDetailRequest = { url: string; nonce: number };
 
-export type KeywordNotePayload = {
-  keyword: string;
-  description: string;
-  sourceUrl: string;
-  targetUrl: string;
-  synapse?: SynapseRow;
-  synapses?: SynapseRow[];
-  currentIndex?: number;
-};
+export type { KeywordNotePayload };
 
 export type FocusDetailController = {
   openDetail: (url: string) => void;
@@ -47,6 +46,9 @@ type Props = {
   onDetailRequestHandled?: () => void;
   /** false = キーワードモーダルのみ（フィードのインライン詳細用） */
   detailModalEnabled?: boolean;
+  synapseShareRequest?: SynapseShareRequest | null;
+  onSynapseShareRequestHandled?: () => void;
+  onSynapseShareChange?: (id: string | null) => void;
 };
 
 function pickEdgeKeyword(s: SynapseRow): string | null {
@@ -152,7 +154,18 @@ function RelatedSynapseRow({
 }
 
 export const FocusDetailModals = forwardRef<FocusDetailController, Props>(function FocusDetailModals(
-  { focusUrl, synapses, workMap, onFocusUrl, detailRequest, onDetailRequestHandled, detailModalEnabled = true },
+  {
+    focusUrl,
+    synapses,
+    workMap,
+    onFocusUrl,
+    detailRequest,
+    onDetailRequestHandled,
+    detailModalEnabled = true,
+    synapseShareRequest,
+    onSynapseShareRequestHandled,
+    onSynapseShareChange,
+  },
   ref,
 ) {
   const [detailOpen, setDetailOpen] = useState(false);
@@ -173,9 +186,39 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
 
   const openKeywordNote = useCallback((payload: KeywordNotePayload) => {
     setKeywordNote(payload);
-  }, []);
+    onSynapseShareChange?.(payload.synapse?.id ?? null);
+  }, [onSynapseShareChange]);
+
+  const closeKeywordNote = useCallback(() => {
+    setKeywordNote(null);
+    onSynapseShareChange?.(null);
+  }, [onSynapseShareChange]);
 
   useImperativeHandle(ref, () => ({ openDetail, openKeywordNote }), [openDetail, openKeywordNote]);
+
+  useEffect(() => {
+    if (!synapseShareRequest) return;
+    const synapse = findSynapseById(synapseShareRequest.id, synapses);
+    if (!synapse) {
+      onSynapseShareChange?.(null);
+      onSynapseShareRequestHandled?.();
+      return;
+    }
+    setKeywordNote(buildKeywordNoteForSynapse(synapse, synapses, workMap));
+    onSynapseShareRequestHandled?.();
+  }, [
+    synapseShareRequest?.nonce,
+    synapseShareRequest,
+    synapses,
+    workMap,
+    onSynapseShareRequestHandled,
+    onSynapseShareChange,
+  ]);
+
+  useEffect(() => {
+    if (readSynapseIdFromLocation()) return;
+    setKeywordNote(null);
+  }, [focusUrl]);
 
   useEffect(() => {
     if (!detailOpen) setDetailUrl(focusUrl);
@@ -221,12 +264,12 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
     if (!detailOpen && !keywordNote) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (keywordNote) setKeywordNote(null);
+      if (keywordNote) closeKeywordNote();
       else setDetailOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [detailOpen, keywordNote]);
+  }, [detailOpen, keywordNote, closeKeywordNote]);
 
   useEffect(() => {
     const supabase = createBrowserClient();
@@ -355,7 +398,7 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
       <AnimatePresence>
         {keywordNote ? (
           <motion.div key="keyword-note-overlay" className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-            <button type="button" aria-label="閉じる" className="absolute inset-0 bg-zinc-900/40 backdrop-blur-[2px]" onClick={() => setKeywordNote(null)} />
+            <button type="button" aria-label="閉じる" className="absolute inset-0 bg-zinc-900/40 backdrop-blur-[2px]" onClick={closeKeywordNote} />
             <motion.div
               role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-body"
               className="relative z-10 flex max-h-[min(85vh,620px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.18)]"
@@ -365,14 +408,14 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
             >
               <div className="flex shrink-0 items-center justify-end gap-2 border-b border-zinc-100 px-4 py-3 sm:px-5">
                 <span id="keyword-note-title" className="sr-only">シナプス詳細</span>
-                <button type="button" onClick={() => setKeywordNote(null)} className="rounded-lg px-2 py-1 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900">閉じる</button>
+                <button type="button" onClick={closeKeywordNote} className="rounded-lg px-2 py-1 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900">閉じる</button>
               </div>
               <ConnectionWorksLine
                 sourceUrl={keywordNote.sourceUrl}
                 targetUrl={keywordNote.targetUrl}
                 focusUrl={focusUrl}
                 onClickWork={(url) => {
-                  setKeywordNote(null);
+                  closeKeywordNote();
                   onFocusUrl(url);
                   if (detailModalEnabled) {
                     window.setTimeout(() => openDetail(url), 180);
@@ -407,6 +450,7 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
                           description: s.description,
                           currentIndex: next,
                         });
+                        onSynapseShareChange?.(s.id);
                       }}
                       className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-medium text-zinc-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
                     >
@@ -429,6 +473,7 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
                           description: s.description,
                           currentIndex: next,
                         });
+                        onSynapseShareChange?.(s.id);
                       }}
                       className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-medium text-zinc-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
                     >

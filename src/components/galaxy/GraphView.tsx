@@ -25,6 +25,13 @@ import { isAmazonUrl } from "@/lib/amazon";
 import { withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import {
+  buildKeywordNoteForSynapse,
+  findSynapseById,
+  type KeywordNotePayload,
+  type SynapseShareRequest,
+} from "@/lib/synapseKeywordNote";
+import { readSynapseIdFromLocation } from "@/lib/synapseShareUrl";
+import {
   LikeButton,
   OgpTileMedia,
   SynapseConnectionTitles,
@@ -50,6 +57,9 @@ type Props = {
   onDetailRequestHandled?: () => void;
   /** モバイルメニュー展開中（ズーム UI を隠す） */
   mobileMenuOpen?: boolean;
+  synapseShareRequest?: SynapseShareRequest | null;
+  onSynapseShareRequestHandled?: () => void;
+  onSynapseShareChange?: (id: string | null) => void;
 };
 
 // ── Layout constants ─────────────────────────────────────────────────────────
@@ -125,6 +135,9 @@ function graphViewportFitZoomMultiplier(viewportW: number): number {
 const MOBILE_FIT_SLOT_Y = LINK_DISTANCE;
 /** フォーカス＋上下1作品の最小縦幅（世界座標 px） */
 const MOBILE_FIT_MIN_STACK_H = 2 * LINK_DISTANCE + CARD_H;
+/** PC: 1-hop リング相当の最小フィット領域（接続が少ない作品の過剰ズーム防止） */
+const DESKTOP_FIT_MIN_BBOX_W = 2 * LINK_DISTANCE + CARD_W;
+const DESKTOP_FIT_MIN_BBOX_H = 2 * LINK_DISTANCE + CARD_H;
 
 /** スマホで UI 100% 比がこの値以下のとき、キーワードを線の近くに留める */
 const MOBILE_LOW_ZOOM_UI_RATIO = 0.8;
@@ -230,6 +243,30 @@ function computeMobileInitialLandingPan(
   const cx = (bbox.minX + bbox.maxX) / 2;
   const cy = (bbox.minY + bbox.maxY) / 2;
   return { x: -cx * zoom, y: -cy * zoom };
+}
+
+/** PC 初回／?focus= リロード: フォーカス＋1-hop 近傍を画面に収める倍率（最小領域付き）。 */
+function computeDesktopNeighborhoodFit(
+  hubPos: { x: number; y: number },
+  oneHopPositions: Array<{ x: number; y: number }>,
+  viewportW: number,
+  viewportH: number,
+): { zoom: number; pan: { x: number; y: number } } {
+  const hx = CARD_W / 2;
+  const hy = CARD_H / 2;
+  const PAD = graphViewportFitPadding(viewportW);
+  const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
+  for (const p of oneHopPositions) expandBBoxWithCard(p.x, p.y, hx, hy, bbox);
+  const bboxW = Math.max(DESKTOP_FIT_MIN_BBOX_W, bbox.maxX - bbox.minX);
+  const bboxH = Math.max(DESKTOP_FIT_MIN_BBOX_H, bbox.maxY - bbox.minY);
+  const zX = (viewportW - PAD * 2) / bboxW;
+  const zY = (viewportH - PAD * 2) / bboxH;
+  const zoom = Math.max(
+    ZOOM_MIN,
+    Math.min(ZOOM_MAX, Math.min(zX, zY) * graphViewportFitZoomMultiplier(viewportW)),
+  );
+  return { zoom, pan: { x: -hubPos.x * zoom, y: -hubPos.y * zoom } };
 }
 
 function expandBBoxWithCard(
@@ -1243,7 +1280,18 @@ function PosterLink({ userId }: { userId: string }) {
 
 // ── Main component ──────────────────────────────────────────────────────────
 
-export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailRequest, onDetailRequestHandled, mobileMenuOpen = false }: Props) {
+export function GraphView({
+  focusUrl,
+  synapses,
+  workMap,
+  onFocusUrl,
+  detailRequest,
+  onDetailRequestHandled,
+  mobileMenuOpen = false,
+  synapseShareRequest,
+  onSynapseShareRequestHandled,
+  onSynapseShareChange,
+}: Props) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentLayerRef = useRef<HTMLDivElement>(null);
   const viewportCenterRef = useRef({ cx: 0, cy: 0 });
@@ -1842,8 +1890,6 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, stored.zoom));
       targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
     } else {
-      const hx = CARD_W / 2;
-      const hy = CARD_H / 2;
       const PAD = graphViewportFitPadding(viewport.w);
       const narrow = isNarrowGraphViewport(viewport.w);
 
@@ -1863,24 +1909,20 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
         );
         targetPan = computeMobileInitialLandingPan(hubPos, oneHop, targetZoom);
       } else {
-        const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
-        expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
+        const oneHopPositions: Array<{ x: number; y: number }> = [];
         for (const n of builtNodes) {
           if (!n.isHub && n.hop !== 1) continue;
           const p = worldPos.get(n.norm);
-          if (!p) continue;
-          expandBBoxWithCard(p.x, p.y, hx, hy, bbox);
+          if (p) oneHopPositions.push(p);
         }
-        if (!isFinite(bbox.minX)) return;
-        const bboxW = Math.max(CARD_W, bbox.maxX - bbox.minX);
-        const bboxH = Math.max(CARD_H, bbox.maxY - bbox.minY);
-        const zX = (viewport.w - PAD * 2) / bboxW;
-        const zY = (viewport.h - PAD * 2) / bboxH;
-        targetZoom = Math.max(
-          ZOOM_MIN,
-          Math.min(ZOOM_MAX, Math.min(zX, zY) * graphViewportFitZoomMultiplier(viewport.w)),
+        const fit = computeDesktopNeighborhoodFit(
+          hubPos,
+          oneHopPositions,
+          viewport.w,
+          viewport.h,
         );
-        targetPan = { x: -hubPos.x * targetZoom, y: -hubPos.y * targetZoom };
+        targetZoom = fit.zoom;
+        targetPan = fit.pan;
       }
       cameraUIBaselineRef.current = { pan: targetPan, zoom: targetZoom };
       setCameraUIBaseline(cameraUIBaselineRef.current);
@@ -2313,17 +2355,41 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
   }, [detailRequest?.nonce, detailRequest, workMap, onDetailRequestHandled]);
 
   // Keyword note modal
-  const [keywordNote, setKeywordNote] = useState<{
-    keyword: string;
-    description: string;
-    sourceUrl: string;
-    targetUrl: string;
-    synapse?: SynapseRow;
-    /** All synapses for this directed pair (sorted by likes desc). */
-    synapses?: SynapseRow[];
-    /** Index in `synapses` of the currently shown one. */
-    currentIndex?: number;
-  } | null>(null);
+  const [keywordNote, setKeywordNote] = useState<KeywordNotePayload | null>(null);
+
+  const openKeywordNote = useCallback((payload: KeywordNotePayload) => {
+    setKeywordNote(payload);
+    onSynapseShareChange?.(payload.synapse?.id ?? null);
+  }, [onSynapseShareChange]);
+
+  const closeKeywordNote = useCallback(() => {
+    setKeywordNote(null);
+    onSynapseShareChange?.(null);
+  }, [onSynapseShareChange]);
+
+  useEffect(() => {
+    if (!synapseShareRequest) return;
+    const synapse = findSynapseById(synapseShareRequest.id, synapses);
+    if (!synapse) {
+      onSynapseShareChange?.(null);
+      onSynapseShareRequestHandled?.();
+      return;
+    }
+    setKeywordNote(buildKeywordNoteForSynapse(synapse, synapses, workMap));
+    onSynapseShareRequestHandled?.();
+  }, [
+    synapseShareRequest?.nonce,
+    synapseShareRequest,
+    synapses,
+    workMap,
+    onSynapseShareRequestHandled,
+    onSynapseShareChange,
+  ]);
+
+  useEffect(() => {
+    if (readSynapseIdFromLocation()) return;
+    setKeywordNote(null);
+  }, [focusUrl]);
 
   // ── Detail OGP fetch for the currently-detailed URL ─────────────────────
   const [detailOgp, setDetailOgp] = useState<{ title: string | null; imageUrl: string | null; description: string | null; siteName: string | null } | null>(null);
@@ -2365,12 +2431,12 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
     if (!detailOpen && !keywordNote) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (keywordNote) setKeywordNote(null);
+      if (keywordNote) closeKeywordNote();
       else setDetailOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [detailOpen, keywordNote]);
+  }, [detailOpen, keywordNote, closeKeywordNote]);
 
   // Access token for like button
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -2576,7 +2642,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
             stackedKeywords={l.stackedKeywords}
             narrow={narrowViewport}
             onActivate={() => {
-              setKeywordNote({
+              openKeywordNote({
                 keyword: l.keyword!,
                 description: l.synapse.description,
                 sourceUrl: l.synapse.source_url,
@@ -2994,7 +3060,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
       <AnimatePresence>
         {keywordNote ? (
           <motion.div key="keyword-note-overlay" className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-            <button type="button" aria-label="閉じる" className="absolute inset-0 bg-zinc-900/40 backdrop-blur-[2px]" onClick={() => setKeywordNote(null)} />
+            <button type="button" aria-label="閉じる" className="absolute inset-0 bg-zinc-900/40 backdrop-blur-[2px]" onClick={closeKeywordNote} />
             <motion.div
               role="dialog" aria-modal="true" aria-labelledby="keyword-note-title" aria-describedby="keyword-note-connection keyword-note-body"
               className="relative z-10 flex max-h-[min(85vh,620px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.18)]"
@@ -3004,14 +3070,14 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
             >
               <div className="flex shrink-0 items-center justify-end gap-2 border-b border-zinc-100 px-4 py-3 sm:px-5">
                 <span id="keyword-note-title" className="sr-only">シナプス詳細</span>
-                <button type="button" onClick={() => setKeywordNote(null)} className="rounded-lg px-2 py-1 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900">閉じる</button>
+                <button type="button" onClick={closeKeywordNote} className="rounded-lg px-2 py-1 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900">閉じる</button>
               </div>
               <ConnectionWorksLine
                 sourceUrl={keywordNote.sourceUrl}
                 targetUrl={keywordNote.targetUrl}
                 focusUrl={focusUrl}
                 onClickWork={(url) => {
-                  setKeywordNote(null);
+                  closeKeywordNote();
                   onFocusUrl(url);
                   window.setTimeout(() => {
                     setDetailUrl(url);
@@ -3051,6 +3117,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
                           description: s.description,
                           currentIndex: next,
                         });
+                        onSynapseShareChange?.(s.id);
                       }}
                       className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-medium text-zinc-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
                     >
@@ -3073,6 +3140,7 @@ export function GraphView({ focusUrl, synapses, workMap, onFocusUrl, detailReque
                           description: s.description,
                           currentIndex: next,
                         });
+                        onSynapseShareChange?.(s.id);
                       }}
                       className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-medium text-zinc-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
                     >

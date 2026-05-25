@@ -5,11 +5,13 @@ import { extractPureWorkTitle } from "@/lib/pureWorkTitle";
 import { mergePurchaseLinks, purchaseLinksFromUrl, type PurchaseLinks } from "@/lib/purchaseLinks";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { computeWorkFingerprint } from "@/lib/workIdentity";
+import { resolveShareSlug } from "@/lib/shareSlugResolve";
 
 export type ContentMetadataLite = {
   url: string;
   canonical_id: string;
   work_fingerprint: string | null;
+  share_slug: string | null;
   purchase_links: unknown;
   title: string | null;
   description: string | null;
@@ -22,6 +24,7 @@ export type WorkEndpointInfo = {
   workId: string;
   representativeUrl: string;
   title: string | null;
+  shareSlug: string | null;
   imageUrl: string | null;
   siteName: string | null;
 };
@@ -41,7 +44,7 @@ async function findMetadataByUrl(
     const { data } = await supabase
       .from("contents_metadata")
       .select(
-        "url,canonical_id,work_fingerprint,purchase_links,title,description,image_url,site_name,updated_at",
+        "url,canonical_id,work_fingerprint,share_slug,purchase_links,title,description,image_url,site_name,updated_at",
       )
       .eq("url", u)
       .maybeSingle();
@@ -58,7 +61,7 @@ async function findMetadataByFingerprint(
   const { data } = await supabase
     .from("contents_metadata")
     .select(
-      "url,canonical_id,work_fingerprint,purchase_links,title,description,image_url,site_name,updated_at",
+      "url,canonical_id,work_fingerprint,share_slug,purchase_links,title,description,image_url,site_name,updated_at",
     )
     .eq("work_fingerprint", fingerprint)
     .neq("url", excludeUrl)
@@ -84,6 +87,60 @@ async function unifyPurchaseLinksForCanonicalId(
 
   const merged = mergePurchaseLinks(existing?.purchase_links, delta);
   await supabase.from("contents_metadata").update({ purchase_links: merged }).eq("canonical_id", canonicalId);
+}
+
+async function findShareSlugByCanonicalId(
+  supabase: SupabaseClient,
+  canonicalId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("contents_metadata")
+    .select("share_slug")
+    .eq("canonical_id", canonicalId)
+    .not("share_slug", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const slug = (data as { share_slug?: string | null } | null)?.share_slug?.trim();
+  return slug || null;
+}
+
+async function unifyShareSlugForCanonicalId(
+  supabase: SupabaseClient,
+  canonicalId: string,
+  slug: string,
+) {
+  await supabase.from("contents_metadata").update({ share_slug: slug }).eq("canonical_id", canonicalId);
+}
+
+async function ensureShareSlugForRow(
+  supabase: SupabaseClient,
+  row: ContentMetadataLite,
+  pureTitle: string | null,
+  titleChanged: boolean,
+): Promise<string | null> {
+  let slug = row.share_slug?.trim() || null;
+  if (!slug) {
+    slug = await findShareSlugByCanonicalId(supabase, row.canonical_id);
+  }
+  if (slug && !titleChanged) return slug;
+
+  const resolved = await resolveShareSlug({
+    title: pureTitle ?? row.title,
+    description: row.description,
+    url: row.url,
+    siteName: row.site_name,
+    existingSlug: slug,
+    titleChanged,
+  });
+  if (!resolved) return slug;
+
+  try {
+    await unifyShareSlugForCanonicalId(supabase, row.canonical_id, resolved);
+  } catch (err) {
+    if (!(err instanceof Error && err.message.includes("share_slug"))) throw err;
+  }
+  return resolved;
 }
 
 function pickSearchNeedle(title: string): string | null {
@@ -212,8 +269,11 @@ export async function upsertContentMetadata(
         .single());
     }
     if (error) throw new Error(error.message);
-    const row = data as unknown as ContentMetadataLite;
+    let row = data as unknown as ContentMetadataLite;
     await unifyPurchaseLinksForCanonicalId(supabase, row.canonical_id, deltaLinks);
+    const titleChanged = (existing.title ?? "") !== (pureTitle ?? "");
+    const slug = await ensureShareSlugForRow(supabase, row, pureTitle, titleChanged);
+    if (slug) row = { ...row, share_slug: slug };
     return row;
   }
 
@@ -250,8 +310,10 @@ export async function upsertContentMetadata(
     ({ data, error } = await supabase.from("contents_metadata").insert(insertPayload).select().single());
   }
   if (error) throw new Error(error.message);
-  const row = data as unknown as ContentMetadataLite;
+  let row = data as unknown as ContentMetadataLite;
   await unifyPurchaseLinksForCanonicalId(supabase, row.canonical_id, deltaLinks);
+  const slug = await ensureShareSlugForRow(supabase, row, pureTitle, true);
+  if (slug) row = { ...row, share_slug: slug };
   return row;
 }
 
@@ -267,7 +329,7 @@ export async function buildWorkEndpointMap(
 
   const { data, error } = await supabase
     .from("contents_metadata")
-    .select("url,canonical_id,title,image_url,site_name,work_fingerprint,updated_at");
+    .select("url,canonical_id,title,image_url,site_name,work_fingerprint,share_slug,updated_at");
   if (error) throw new Error(error.message);
 
   const byNorm = new Map<string, ContentMetadataLite[]>();
@@ -298,11 +360,75 @@ export async function buildWorkEndpointMap(
       workId: hit.canonical_id,
       representativeUrl: rep.url,
       title: displayTitle,
+      shareSlug: rep.share_slug?.trim() || null,
       imageUrl: rep.image_url,
       siteName: rep.site_name,
     };
   }
   return out;
+}
+
+/** スラッグ未設定の作品に Gemini で share_slug を付与（1リクエストあたり上限あり）。 */
+export async function backfillMissingShareSlugs(
+  supabase: SupabaseClient,
+  byWorkId: Map<string, ContentMetadataLite>,
+  limit = 6,
+): Promise<number> {
+  let done = 0;
+  for (const rec of byWorkId.values()) {
+    if (done >= limit) break;
+    if (rec.share_slug?.trim()) continue;
+    const pureTitle = extractPureWorkTitle(rec.title, rec.url) ?? rec.title;
+    const slug = await ensureShareSlugForRow(supabase, rec, pureTitle, false);
+    if (slug) {
+      rec.share_slug = slug;
+      done++;
+    }
+  }
+  return done;
+}
+
+/** グラフ上の作品だけ share_slug を非同期 backfill する（synapses API の after 用）。 */
+export async function backfillShareSlugsForEndpointUrls(
+  supabase: SupabaseClient,
+  endpointUrls: string[],
+  limit = 8,
+): Promise<number> {
+  const normUrls = Array.from(
+    new Set(endpointUrls.map((u) => normalizeSynapseEndpoint(u)).filter(Boolean)),
+  );
+  if (normUrls.length === 0) return 0;
+
+  const { data, error } = await supabase
+    .from("contents_metadata")
+    .select("url,canonical_id,title,description,image_url,site_name,work_fingerprint,share_slug,purchase_links,updated_at");
+  if (error) return 0;
+
+  const byNorm = new Map<string, ContentMetadataLite[]>();
+  for (const row of data ?? []) {
+    const rec = row as unknown as ContentMetadataLite;
+    const norm = normalizeSynapseEndpoint(rec.url);
+    const list = byNorm.get(norm) ?? [];
+    list.push(rec);
+    byNorm.set(norm, list);
+  }
+
+  const byWorkId = new Map<string, ContentMetadataLite>();
+  for (const rows of byNorm.values()) {
+    const best = rows.sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0]!;
+    const prev = byWorkId.get(best.canonical_id);
+    if (!prev || prev.updated_at < best.updated_at) byWorkId.set(best.canonical_id, best);
+  }
+
+  const onGraph = new Map<string, ContentMetadataLite>();
+  for (const norm of normUrls) {
+    const hit = byNorm.get(norm)?.[0];
+    if (!hit) continue;
+    const rep = byWorkId.get(hit.canonical_id);
+    if (rep) onGraph.set(hit.canonical_id, rep);
+  }
+
+  return backfillMissingShareSlugs(supabase, onGraph, limit);
 }
 
 export function workKeyForUrl(normUrl: string, workMap: WorkEndpointMap): string {

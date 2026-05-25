@@ -21,6 +21,7 @@ import {
   type FocusDetailController,
   type GraphDetailRequest,
 } from "@/components/galaxy/FocusDetailModals";
+import type { SynapseShareRequest } from "@/lib/synapseKeywordNote";
 
 type Props = {
   focusUrl: string;
@@ -29,6 +30,9 @@ type Props = {
   onFocusUrl: (url: string) => void;
   detailRequest?: GraphDetailRequest | null;
   onDetailRequestHandled?: () => void;
+  synapseShareRequest?: SynapseShareRequest | null;
+  onSynapseShareRequestHandled?: () => void;
+  onSynapseShareChange?: (id: string | null) => void;
 };
 
 type OgpMini = { title: string | null; imageUrl: string | null };
@@ -574,6 +578,9 @@ export function ScrollFeedView({
   onFocusUrl,
   detailRequest,
   onDetailRequestHandled,
+  synapseShareRequest,
+  onSynapseShareRequestHandled,
+  onSynapseShareChange,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickyRef = useRef<HTMLDivElement>(null);
@@ -693,6 +700,9 @@ export function ScrollFeedView({
         workMap={workMap}
         onFocusUrl={onFocusUrl}
         detailModalEnabled={false}
+        synapseShareRequest={synapseShareRequest}
+        onSynapseShareRequestHandled={onSynapseShareRequestHandled}
+        onSynapseShareChange={onSynapseShareChange}
       />
     </>
   );

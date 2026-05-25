@@ -12,6 +12,9 @@ import { ViewModeToggle, type ViewMode } from "./ViewModeToggle";
 import { NicknameModal } from "./NicknameModal";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import { GoogleSignInButton } from "./GoogleSignInButton";
+import { findSynapseById } from "@/lib/synapseKeywordNote";
+import { decodeFocusParam, syncFocusParamInSearchParams } from "@/lib/focusShareUrl";
+import { readSynapseIdFromLocation, writeSynapseIdToUrl } from "@/lib/synapseShareUrl";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import type { WorkEndpointMap } from "@/lib/workResolve";
 
@@ -161,6 +164,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileViewMode, setMobileViewMode] = useState<ViewMode>("map");
   const [isMdUp, setIsMdUp] = useState(false);
+  const [synapseShareRequest, setSynapseShareRequest] = useState<{ id: string; nonce: number } | null>(null);
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 768px)");
@@ -176,10 +180,43 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? res.statusText);
       const list = data.synapses as SynapseRow[];
+      const endpoints = (data.workEndpoints as WorkEndpointMap | undefined) ?? {};
       setSynapses(list);
-      setWorkEndpoints((data.workEndpoints as WorkEndpointMap | undefined) ?? {});
+      setWorkEndpoints(endpoints);
       setLoadError(null);
-      setFocusUrl((prev) => prev ?? pickInitialFocusUrl(list));
+      const sharedSynapseId = readSynapseIdFromLocation();
+      const sharedSynapse = sharedSynapseId ? findSynapseById(sharedSynapseId, list) : null;
+      const focusFromUrl =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("focus")
+          : null;
+
+      if (sharedSynapse) {
+        const publicUrl = normalizeSynapseEndpoint(sharedSynapse.source_url);
+        setFocusUrl(publicUrl);
+        if (typeof window !== "undefined") {
+          try {
+            const params = new URLSearchParams(window.location.search);
+            syncFocusParamInSearchParams(params, publicUrl, endpoints);
+            window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+          } catch { /* noop */ }
+        }
+      } else if (sharedSynapseId) {
+        writeSynapseIdToUrl(null);
+        setFocusUrl((prev) => prev ?? (focusFromUrl ? decodeFocusParam(focusFromUrl, endpoints) : null) ?? pickInitialFocusUrl(list));
+      } else if (focusFromUrl) {
+        setFocusUrl(decodeFocusParam(focusFromUrl, endpoints));
+        if (typeof window !== "undefined") {
+          try {
+            const params = new URLSearchParams(window.location.search);
+            if (syncFocusParamInSearchParams(params, decodeFocusParam(focusFromUrl, endpoints), endpoints)) {
+              window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+            }
+          } catch { /* noop */ }
+        }
+      } else {
+        setFocusUrl((prev) => prev ?? pickInitialFocusUrl(list));
+      }
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -205,21 +242,23 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
     saveMobileViewMode(next);
   }, []);
 
-  // ?focus=<url> でフォーカス URL を初期化（アフィリエイト tag は URL に載せない）
+  // ?synapse=<uuid> を復元。?focus= は synapses 取得後に workMap 付きで解決する
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const params = new URLSearchParams(window.location.search);
-      const f = params.get("focus");
-      if (!f) return;
-      const publicUrl = normalizeSynapseEndpoint(f);
-      setFocusUrl(publicUrl);
-      if (publicUrl !== f) {
-        params.set("focus", publicUrl);
-        const next = `${window.location.pathname}?${params.toString()}`;
-        window.history.replaceState(null, "", next);
+      const synapseId = readSynapseIdFromLocation();
+      if (synapseId) {
+        setSynapseShareRequest({ id: synapseId, nonce: Date.now() });
       }
     } catch { /* noop */ }
+  }, []);
+
+  const handleSynapseShareChange = useCallback((id: string | null) => {
+    writeSynapseIdToUrl(id);
+  }, []);
+
+  const handleSynapseShareRequestHandled = useCallback(() => {
+    setSynapseShareRequest(null);
   }, []);
 
   useEffect(() => {
@@ -237,7 +276,8 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
     if (typeof window !== "undefined") {
       try {
         const params = new URLSearchParams(window.location.search);
-        params.set("focus", publicUrl);
+        syncFocusParamInSearchParams(params, publicUrl, workEndpoints);
+        params.delete("synapse");
         const next = `${window.location.pathname}?${params.toString()}`;
         window.history.replaceState(null, "", next);
       } catch { /* noop */ }
@@ -248,7 +288,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
     setViewCount(next);
     saveViewCount(next);
     if (next > limit) setGateOpen(true);
-  }, [viewCount, user, userPostCount]);
+  }, [viewCount, user, userPostCount, workEndpoints]);
 
   const handleSynapseCreated = useCallback((sourceUrl: string) => {
     const publicUrl = normalizeSynapseEndpoint(sourceUrl);
@@ -257,13 +297,26 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
     if (typeof window !== "undefined") {
       try {
         const params = new URLSearchParams(window.location.search);
-        params.set("focus", publicUrl);
+        syncFocusParamInSearchParams(params, publicUrl, workEndpoints);
         window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
       } catch { /* noop */ }
     }
     void refresh();
     if (user) setUserPostCount((prev) => prev + 1);
-  }, [refresh, user]);
+  }, [refresh, user, workEndpoints]);
+
+  const feedViewActive = !isMdUp && mobileViewMode === "feed";
+
+  useEffect(() => {
+    if (!focusUrl || !synapsesLoaded || typeof window === "undefined") return;
+    if (Object.keys(workEndpoints).length === 0) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (syncFocusParamInSearchParams(params, focusUrl, workEndpoints)) {
+        window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+      }
+    } catch { /* noop */ }
+  }, [focusUrl, workEndpoints, synapsesLoaded]);
 
   return (
     <AuthFeedbackProvider>
@@ -323,6 +376,9 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
                     synapses={synapses}
                     workMap={workEndpoints}
                     onFocusUrl={handleFocusUrl}
+                    synapseShareRequest={feedViewActive ? synapseShareRequest : null}
+                    onSynapseShareRequestHandled={handleSynapseShareRequestHandled}
+                    onSynapseShareChange={handleSynapseShareChange}
                   />
                 </div>
                 <div
@@ -345,6 +401,9 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
                     workMap={workEndpoints}
                     onFocusUrl={handleFocusUrl}
                     mobileMenuOpen={mobileNavOpen}
+                    synapseShareRequest={feedViewActive ? null : synapseShareRequest}
+                    onSynapseShareRequestHandled={handleSynapseShareRequestHandled}
+                    onSynapseShareChange={handleSynapseShareChange}
                   />
                 </div>
               </div>
