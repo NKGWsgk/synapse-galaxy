@@ -306,7 +306,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
     if (user) setUserPostCount((prev) => prev + 1);
   }, [refresh, user, workEndpoints]);
 
-  const feedViewActive = !isMdUp && mobileViewMode === "feed";
+  const feedViewActive = mobileViewMode === "feed";
 
   useEffect(() => {
     if (!focusUrl || !synapsesLoaded || typeof window === "undefined") return;
@@ -393,7 +393,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
               <div key="loading" className="flex h-full items-center justify-center text-sm text-zinc-400">読み込み中…</div>
             ) : focusUrl ? (
               <div key="graph" className="h-full w-full">
-                <div className={mobileViewMode === "feed" ? "h-full md:hidden" : "hidden"}>
+                <div className={mobileViewMode === "feed" ? "h-full" : "hidden"}>
                   <ScrollFeedView
                     focusUrl={focusUrl}
                     synapses={synapses}
@@ -404,17 +404,13 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
                     onSynapseShareChange={handleSynapseShareChange}
                   />
                 </div>
-                <div
-                  className={
-                    mobileViewMode === "map"
-                      ? "h-full md:block"
-                      : "hidden md:block md:h-full"
-                  }
-                >
+                <div className={mobileViewMode === "map" ? "h-full" : "hidden"}>
                   <GraphView
                     key={
                       isMdUp
-                        ? "desktop-graph"
+                        ? mobileViewMode === "map"
+                          ? "desktop-graph"
+                          : "desktop-graph-hidden"
                         : mobileViewMode === "map"
                           ? "mobile-graph"
                           : "mobile-graph-hidden"

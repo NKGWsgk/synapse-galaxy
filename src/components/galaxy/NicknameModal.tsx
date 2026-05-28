@@ -91,7 +91,7 @@ export function NicknameModal({ user, onSet }: Props) {
             type="text"
             value={value}
             onChange={(e) => { setValue(e.target.value); setError(null); }}
-            placeholder="例: SG-owner"
+            placeholder="例: Y.mayumi"
             maxLength={30}
             autoFocus
             disabled={submitting}

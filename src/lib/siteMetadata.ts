@@ -15,6 +15,14 @@ export const SITE_ALTERNATE_NAMES = [
 export const SITE_DESCRIPTION =
   "SYNAPSE Galaxy（シナプスギャラクシー）は、書籍・動画・Web記事などのコンテンツを「なぜ繋がるか」という自由記述で結ぶシナプス型SNSです。4×4コンパスで接続を探索し、AIが抽出するキーワードと8属性（理・文・芸・時ほか）で知的好奇心を可視化します。";
 
+/** SNS シェア用 OGP 画像（public/ 配下） */
+export const SITE_OGP_IMAGE = {
+  path: "/ogp.jpg",
+  width: 1024,
+  height: 629,
+  alt: "SYNAPSE Galaxy — コンテンツを「なぜ繋がるか」で結ぶシナプス型ネットワーク",
+} as const;
+
 export const SITE_KEYWORDS = [
   SITE_NAME_JA,
   "シナプス ギャラクシー",
@@ -70,11 +78,20 @@ export function buildSiteMetadata(overrides?: Metadata): Metadata {
       siteName: combinedName,
       title: defaultTitle,
       description: SITE_DESCRIPTION,
+      images: [
+        {
+          url: SITE_OGP_IMAGE.path,
+          width: SITE_OGP_IMAGE.width,
+          height: SITE_OGP_IMAGE.height,
+          alt: SITE_OGP_IMAGE.alt,
+        },
+      ],
     },
     twitter: {
-      card: "summary",
+      card: "summary_large_image",
       title: defaultTitle,
       description: SITE_DESCRIPTION,
+      images: [SITE_OGP_IMAGE.path],
     },
     alternates: {
       canonical: "/",

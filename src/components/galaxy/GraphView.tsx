@@ -561,29 +561,73 @@ function preferredAngleForIsland(
   return 0;
 }
 
-function pickIslandSectorAngle(
+function rankIslandSectorCandidates(
   occupancy: number[],
   preferredAngle: number,
-  reservedSectors: Set<number>,
-): number {
+): number[] {
   const sectorCount = occupancy.length;
   const preferredSector = angleToSectorIndex(preferredAngle, sectorCount);
-  let bestSector = preferredSector;
-  let bestScore = Infinity;
-  for (let i = 0; i < sectorCount; i++) {
-    if (reservedSectors.has(i)) continue;
+  return Array.from({ length: sectorCount }, (_, i) => {
     const circDiff = Math.min(
       Math.abs(i - preferredSector),
       sectorCount - Math.abs(i - preferredSector),
     );
-    const score = occupancy[i] * 10 + circDiff;
-    if (score < bestScore) {
-      bestScore = score;
-      bestSector = i;
+    return { i, score: occupancy[i] * 10 + circDiff };
+  })
+    .sort((a, b) => a.score - b.score || a.i - b.i)
+    .map((entry) => entry.i);
+}
+
+function sectorIndexToAngle(sector: number, sectorCount: number): number {
+  return (sector / sectorCount) * 2 * Math.PI - Math.PI + Math.PI / sectorCount;
+}
+
+function islandPlacementCollides(
+  localPositions: Map<string, { x: number; y: number }>,
+  offset: { x: number; y: number },
+  existingPositions: Iterable<{ x: number; y: number }>,
+): boolean {
+  const minDist = 2 * NODE_RADIUS;
+  for (const local of localPositions.values()) {
+    const wx = offset.x + local.x;
+    const wy = offset.y + local.y;
+    for (const existing of existingPositions) {
+      if (Math.hypot(wx - existing.x, wy - existing.y) < minDist) return true;
     }
   }
-  reservedSectors.add(bestSector);
-  return (bestSector / sectorCount) * 2 * Math.PI - Math.PI + Math.PI / sectorCount;
+  return false;
+}
+
+function pickIslandPlacementOffset(
+  localPositions: Map<string, { x: number; y: number }>,
+  occupancy: number[],
+  preferredAngle: number,
+  baseAnchorRadius: number,
+  existingPositions: Iterable<{ x: number; y: number }>,
+): { x: number; y: number } {
+  const sectorCandidates = rankIslandSectorCandidates(occupancy, preferredAngle);
+  const maxRadiusSteps = 8;
+  const radiusStep = LINK_DISTANCE * 0.35;
+
+  for (let radiusStepIdx = 0; radiusStepIdx <= maxRadiusSteps; radiusStepIdx++) {
+    const anchorRadius = baseAnchorRadius + radiusStepIdx * radiusStep;
+    for (const sector of sectorCandidates) {
+      const offset = {
+        x: Math.cos(sectorIndexToAngle(sector, ISLAND_SECTOR_COUNT)) * anchorRadius,
+        y: Math.sin(sectorIndexToAngle(sector, ISLAND_SECTOR_COUNT)) * anchorRadius,
+      };
+      if (!islandPlacementCollides(localPositions, offset, existingPositions)) {
+        return offset;
+      }
+    }
+  }
+
+  const fallbackSector = sectorCandidates[0] ?? 0;
+  const fallbackRadius = baseAnchorRadius + maxRadiusSteps * radiusStep;
+  return {
+    x: Math.cos(sectorIndexToAngle(fallbackSector, ISLAND_SECTOR_COUNT)) * fallbackRadius,
+    y: Math.sin(sectorIndexToAngle(fallbackSector, ISLAND_SECTOR_COUNT)) * fallbackRadius,
+  };
 }
 
 function bfsHopsInComponent(
@@ -776,7 +820,7 @@ function placeIslandComponents(
   if (islandComponents.length === 0) return result;
 
   let occupancy = computeAngularOccupancy(mainPositions.values(), ISLAND_SECTOR_COUNT);
-  const reservedSectors = new Set<number>();
+  const existingPositions: { x: number; y: number }[] = [...mainPositions.values()];
 
   const sorted = [...islandComponents].sort((a, b) => {
     const anchorA = pickComponentAnchor(a, neighbors, synapses, workMap);
@@ -800,20 +844,22 @@ function placeIslandComponents(
     const anchorRadius = ISLAND_ANCHOR_RADIUS + Math.max(0, maxInternalHop - 1) * LINK_DISTANCE * 0.15;
 
     const prefAngle = preferredAngleForIsland(anchor, synapses, workMap);
-    const sectorAngle = pickIslandSectorAngle(occupancy, prefAngle, reservedSectors);
-    const ox = Math.cos(sectorAngle) * anchorRadius;
-    const oy = Math.sin(sectorAngle) * anchorRadius;
-
-    for (const norm of comp) {
-      const local = localPositions.get(norm);
-      if (!local) continue;
-      result.set(norm, { x: ox + local.x, y: oy + local.y });
-    }
+    const offset = pickIslandPlacementOffset(
+      localPositions,
+      occupancy,
+      prefAngle,
+      anchorRadius,
+      existingPositions,
+    );
 
     const placedThisIsland: { x: number; y: number }[] = [];
     for (const norm of comp) {
-      const p = result.get(norm);
-      if (p) placedThisIsland.push(p);
+      const local = localPositions.get(norm);
+      if (!local) continue;
+      const worldPos = { x: offset.x + local.x, y: offset.y + local.y };
+      result.set(norm, worldPos);
+      placedThisIsland.push(worldPos);
+      existingPositions.push(worldPos);
     }
     const islandOcc = computeAngularOccupancy(placedThisIsland, ISLAND_SECTOR_COUNT);
     for (let i = 0; i < ISLAND_SECTOR_COUNT; i++) {
