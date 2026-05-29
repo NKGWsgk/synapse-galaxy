@@ -1352,6 +1352,10 @@ export function GraphView({
   useEffect(() => { panRef.current = pan; }, [pan]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
 
+  /** 世界原点 (0,0) から外側へ順に作品カードを表示する */
+  const revealTokenRef = useRef(0);
+  const [revealRadius, setRevealRadius] = useState(0);
+
   const gesturingRef = useRef(false);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{ dist0: number; zoom0: number; pan0: { x: number; y: number } } | null>(null);
@@ -1881,6 +1885,37 @@ export function GraphView({
 
     return () => {
       sim.stop();
+    };
+  }, [synapses, workMap]);
+
+  useEffect(() => {
+    if (synapses.length === 0) return;
+    const token = ++revealTokenRef.current;
+    setRevealRadius(0);
+
+    let raf = 0;
+    const startTimer = window.setTimeout(() => {
+      if (token !== revealTokenRef.current) return;
+      let maxR = LINK_DISTANCE;
+      for (const pos of worldPositionsRef.current.values()) {
+        maxR = Math.max(maxR, Math.hypot(pos.x, pos.y));
+      }
+      const nodeCount = worldPositionsRef.current.size;
+      const durationMs = Math.min(2200, 500 + nodeCount * 28);
+      const t0 = performance.now();
+      function step(now: number) {
+        if (token !== revealTokenRef.current) return;
+        const k = Math.min(1, (now - t0) / durationMs);
+        setRevealRadius(maxR * easeOutCubic(k));
+        if (k < 1) raf = requestAnimationFrame(step);
+      }
+      raf = requestAnimationFrame(step);
+    }, 32);
+
+    return () => {
+      revealTokenRef.current++;
+      window.clearTimeout(startTimer);
+      if (raf) cancelAnimationFrame(raf);
     };
   }, [synapses, workMap]);
 
@@ -2596,6 +2631,8 @@ export function GraphView({
       const sPos = sInView ? nodePosByNorm.get(sNorm) : worldPositionsRef.current.get(sNorm);
       const tPos = tInView ? nodePosByNorm.get(tNorm) : worldPositionsRef.current.get(tNorm);
       if (!sPos || !tPos) continue;
+      const edgeMidDist = Math.hypot((sPos.x + tPos.x) / 2, (sPos.y + tPos.y) / 2);
+      if (edgeMidDist > revealRadius + CARD_W * 0.5) continue;
       const halfW = CARD_W / 2;
       const halfH = CARD_H / 2;
       const tipPt = rayRectIntersection(sPos.x, sPos.y, tPos.x, tPos.y, halfW, halfH);
@@ -2759,6 +2796,8 @@ export function GraphView({
           {/* Cards */}
           {nodes.map((n) => {
             if (typeof n.x !== "number" || typeof n.y !== "number") return null;
+            const distFromOrigin = Math.hypot(n.x, n.y);
+            const revealed = distFromOrigin <= revealRadius + CARD_W * 0.45;
             return (
               <div
                 key={n.norm}
@@ -2768,8 +2807,10 @@ export function GraphView({
                   left: n.x,
                   top: n.y,
                   transform: "translate(-50%, -50%)",
-                  pointerEvents: "auto",
+                  pointerEvents: revealed ? "auto" : "none",
                   zIndex: n.isHub ? 20 : 10,
+                  opacity: revealed ? 1 : 0,
+                  transition: "opacity 0.38s ease-out",
                 }}
                 onPointerMove={onNodePointerMove}
                 onPointerUp={onNodePointerUp}

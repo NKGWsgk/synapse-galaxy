@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createAnonClient, createServiceClient } from "@/lib/supabase/clients";
-import { backfillShareSlugsForEndpointUrls, buildWorkEndpointMap } from "@/lib/workResolve";
+import { createAnonClient } from "@/lib/supabase/clients";
+import { buildWorkEndpointMap } from "@/lib/workResolve";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 
 const PAGE_SIZE = 1000;
@@ -48,13 +48,6 @@ export async function GET(req: Request) {
       const row = s as { source_url?: string; target_url?: string };
       return [row.source_url, row.target_url].filter((u): u is string => typeof u === "string");
     });
-
-    try {
-      const service = createServiceClient();
-      await backfillShareSlugsForEndpointUrls(service, endpointUrls);
-    } catch (e) {
-      console.error("[synapses/share_slug backfill]", e);
-    }
 
     const workEndpoints = await buildWorkEndpointMap(supabase, endpointUrls);
 

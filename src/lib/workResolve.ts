@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchGraphEndpointNorms, isUrlOnGraph } from "@/lib/graphEndpoints";
 import { findCanonicalMatch } from "@/lib/gemini/canonicalize";
+import { fetchOgpResilient, pureTitleForResponse } from "@/lib/ogpResolve";
 import { extractPureWorkTitle } from "@/lib/pureWorkTitle";
 import { mergePurchaseLinks, purchaseLinksFromUrl, type PurchaseLinks } from "@/lib/purchaseLinks";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
@@ -145,12 +146,65 @@ async function ensureShareSlugForRow(
   return resolved;
 }
 
+async function ensureMetadataRowForUrl(
+  supabase: SupabaseClient,
+  rawUrl: string,
+  graphNorms: Set<string>,
+): Promise<ContentMetadataLite | null> {
+  const url = normalizeSynapseEndpoint(rawUrl);
+  let existing = await findMetadataByUrl(supabase, rawUrl);
+  if (existing?.title?.trim()) return existing;
+
+  try {
+    const og = await fetchOgpResilient(url);
+    return await upsertContentMetadata(
+      supabase,
+      url,
+      {
+        title: pureTitleForResponse(og.title ?? existing?.title ?? null, url),
+        description: og.description ?? existing?.description ?? null,
+        imageUrl: og.imageUrl ?? existing?.image_url ?? null,
+        siteName: og.siteName ?? existing?.site_name ?? null,
+      },
+      { graphNorms },
+    );
+  } catch {
+    return existing;
+  }
+}
+
+/** グラフ endpoint のうちメタデータ未登録・タイトル空の URL に OGP を取得して upsert。 */
+async function ensureMetadataForEndpointUrls(
+  supabase: SupabaseClient,
+  endpointUrls: string[],
+  concurrency = 4,
+): Promise<void> {
+  const normUrls = Array.from(
+    new Set(endpointUrls.map((u) => normalizeSynapseEndpoint(u)).filter(Boolean)),
+  );
+  if (normUrls.length === 0) return;
+
+  const needsOgp: string[] = [];
+  for (const norm of normUrls) {
+    const row = await findMetadataByUrl(supabase, norm);
+    if (!row || !row.title?.trim()) needsOgp.push(norm);
+  }
+  if (needsOgp.length === 0) return;
+
+  const graphNorms = await fetchGraphEndpointNorms(supabase);
+  for (let i = 0; i < needsOgp.length; i += concurrency) {
+    const batch = needsOgp.slice(i, i + concurrency);
+    await Promise.all(batch.map((url) => ensureMetadataRowForUrl(supabase, url, graphNorms)));
+  }
+}
+
 /** 1 作品の share_slug を Gemini で確保（オンデマンド API 用）。 */
 export async function ensureShareSlugForUrl(
   supabase: SupabaseClient,
   rawUrl: string,
 ): Promise<string | null> {
-  const existing = await findMetadataByUrl(supabase, rawUrl);
+  const graphNorms = await fetchGraphEndpointNorms(supabase);
+  const existing = await ensureMetadataRowForUrl(supabase, rawUrl, graphNorms);
   if (!existing) return null;
   const pureTitle = extractPureWorkTitle(existing.title, existing.url) ?? existing.title;
   return ensureShareSlugForRow(supabase, existing, pureTitle, false);
@@ -340,32 +394,65 @@ export async function buildWorkEndpointMap(
   );
   if (normUrls.length === 0) return {};
 
-  const { data, error } = await supabase
-    .from("contents_metadata")
-    .select("url,canonical_id,title,image_url,site_name,work_fingerprint,share_slug,updated_at");
-  if (error) throw new Error(error.message);
+  const lookupUrls = Array.from(
+    new Set(endpointUrls.flatMap((u) => urlLookupCandidates(u)).filter(Boolean)),
+  );
+
+  const METADATA_SELECT =
+    "url,canonical_id,title,image_url,site_name,work_fingerprint,share_slug,updated_at";
+  const BATCH = 200;
+  const directRows: ContentMetadataLite[] = [];
+
+  for (let i = 0; i < lookupUrls.length; i += BATCH) {
+    const batch = lookupUrls.slice(i, i + BATCH);
+    const { data, error } = await supabase
+      .from("contents_metadata")
+      .select(METADATA_SELECT)
+      .in("url", batch);
+    if (error) throw new Error(error.message);
+    for (const row of data ?? []) directRows.push(row as unknown as ContentMetadataLite);
+  }
 
   const byNorm = new Map<string, ContentMetadataLite[]>();
-  for (const row of data ?? []) {
-    const rec = row as unknown as ContentMetadataLite;
-    const norm = normalizeSynapseEndpoint(rec.url);
+  for (const row of directRows) {
+    const norm = normalizeSynapseEndpoint(row.url);
     const list = byNorm.get(norm) ?? [];
-    list.push(rec);
+    list.push(row);
     byNorm.set(norm, list);
   }
 
+  const canonicalIds = Array.from(
+    new Set(
+      normUrls
+        .map((norm) => byNorm.get(norm)?.[0]?.canonical_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  );
+
+  const repRows: ContentMetadataLite[] = [...directRows];
+  if (canonicalIds.length > 0) {
+    for (let i = 0; i < canonicalIds.length; i += BATCH) {
+      const batch = canonicalIds.slice(i, i + BATCH);
+      const { data, error } = await supabase
+        .from("contents_metadata")
+        .select(METADATA_SELECT)
+        .in("canonical_id", batch);
+      if (error) throw new Error(error.message);
+      for (const row of data ?? []) repRows.push(row as unknown as ContentMetadataLite);
+    }
+  }
+
   const byWorkId = new Map<string, ContentMetadataLite>();
-  for (const rows of byNorm.values()) {
-    const best = rows.sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0]!;
-    const prev = byWorkId.get(best.canonical_id);
-    if (!prev || prev.updated_at < best.updated_at) byWorkId.set(best.canonical_id, best);
+  for (const row of repRows) {
+    const prev = byWorkId.get(row.canonical_id);
+    if (!prev || prev.updated_at < row.updated_at) byWorkId.set(row.canonical_id, row);
   }
 
   const out: WorkEndpointMap = {};
   for (const norm of normUrls) {
     const rows = byNorm.get(norm);
     if (!rows?.length) continue;
-    const hit = rows[0]!;
+    const hit = rows.sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0]!;
     const rep = byWorkId.get(hit.canonical_id) ?? hit;
     const displayTitle =
       extractPureWorkTitle(rep.title, rep.url) ?? extractPureWorkTitle(hit.title, hit.url) ?? rep.title;
@@ -412,6 +499,8 @@ export async function backfillShareSlugsForEndpointUrls(
     new Set(endpointUrls.map((u) => normalizeSynapseEndpoint(u)).filter(Boolean)),
   );
   if (normUrls.length === 0) return 0;
+
+  await ensureMetadataForEndpointUrls(supabase, endpointUrls);
 
   const { data, error } = await supabase
     .from("contents_metadata")

@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { AuthFeedbackProvider } from "./AuthFeedback";
@@ -65,6 +65,37 @@ function loadMobileViewMode(): ViewMode {
 }
 function saveMobileViewMode(mode: ViewMode) {
   try { localStorage.setItem(MOBILE_VIEW_KEY, mode); } catch { /* noop */ }
+}
+
+/** データ取得中 — 空白＋テキストではなく銀河の骨格を先に見せる */
+function GalaxyLoadingShell() {
+  const ringSizes = [140, 280, 420, 560];
+  return (
+    <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
+      {ringSizes.map((size, i) => (
+        <motion.div
+          key={size}
+          className="absolute rounded-full border border-indigo-200/35"
+          style={{ width: size, height: size }}
+          initial={{ opacity: 0.2, scale: 0.97 }}
+          animate={{ opacity: [0.18, 0.42, 0.18], scale: [0.97, 1, 0.97] }}
+          transition={{ duration: 2.2 + i * 0.35, repeat: Infinity, ease: "easeInOut", delay: i * 0.12 }}
+        />
+      ))}
+      <motion.div
+        className="relative z-10 flex flex-col overflow-hidden rounded-xl bg-white shadow-[0_3px_12px_rgba(0,0,0,0.08)] ring-2 ring-indigo-300/50"
+        style={{ width: 140, height: 110 }}
+        animate={{ opacity: [0.72, 1, 0.72] }}
+        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+      >
+        <div className="min-h-0 flex-1 animate-pulse bg-zinc-100" />
+        <div className="h-[2.875rem] shrink-0 animate-pulse bg-zinc-50" />
+      </motion.div>
+      <p className="absolute bottom-[18%] text-xs font-medium tracking-wide text-zinc-400/90">
+        銀河を描画中…
+      </p>
+    </div>
+  );
 }
 
 function EmptyGalaxy({ onOpenPost }: { onOpenPost: () => void }) {
@@ -166,6 +197,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   const [mobileViewMode, setMobileViewMode] = useState<ViewMode>("map");
   const [isMdUp, setIsMdUp] = useState(false);
   const [synapseShareRequest, setSynapseShareRequest] = useState<{ id: string; nonce: number } | null>(null);
+  const shareSlugFetchStartedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 768px)");
@@ -176,6 +208,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   }, []);
 
   const refresh = useCallback(async () => {
+    shareSlugFetchStartedRef.current.clear();
     try {
       const res = await fetch("/api/synapses");
       const data = await res.json();
@@ -319,27 +352,49 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
     } catch { /* noop */ }
   }, [focusUrl, workEndpoints, synapsesLoaded]);
 
-  // share_slug 未生成の作品は API で Gemini 生成 → URL を英語スラッグに統一
+  // share_slug 未生成の作品は全件 API で Gemini 生成 → ?focus= を英語スラッグに統一
   useEffect(() => {
-    if (!focusUrl || !synapsesLoaded) return;
-    const norm = normalizeSynapseEndpoint(focusUrl);
-    const info = workEndpoints[norm];
-    if (info?.shareSlug && isAcceptableShareSlug(info.shareSlug)) return;
+    if (!synapsesLoaded) return;
+
+    const pending = Object.entries(workEndpoints).filter(([norm, info]) => {
+      if (info.shareSlug && isAcceptableShareSlug(info.shareSlug)) return false;
+      return !shareSlugFetchStartedRef.current.has(norm);
+    });
+    if (pending.length === 0) return;
 
     let cancelled = false;
-    void fetch(`/api/work/share-slug?url=${encodeURIComponent(focusUrl)}`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j: { slug?: string | null }) => {
-        if (cancelled || !j.slug?.trim() || !isAcceptableShareSlug(j.slug.trim())) return;
-        setWorkEndpoints((prev) => {
-          const cur = prev[norm];
-          if (!cur) return prev;
-          return { ...prev, [norm]: { ...cur, shareSlug: j.slug!.trim() } };
-        });
-      })
-      .catch(() => { /* noop */ });
+    for (const [norm] of pending) shareSlugFetchStartedRef.current.add(norm);
+
+    void (async () => {
+      const CONCURRENCY = 4;
+      const urls = pending.map(([, info]) => info.representativeUrl);
+      for (let i = 0; i < urls.length; i += CONCURRENCY) {
+        if (cancelled) return;
+        await Promise.all(
+          urls.slice(i, i + CONCURRENCY).map(async (url) => {
+            try {
+              const r = await fetch(`/api/work/share-slug?url=${encodeURIComponent(url)}`, { cache: "no-store" });
+              const j = (await r.json()) as { slug?: string | null };
+              const norm = normalizeSynapseEndpoint(url);
+              if (cancelled || !j.slug?.trim() || !isAcceptableShareSlug(j.slug.trim())) {
+                shareSlugFetchStartedRef.current.delete(norm);
+                return;
+              }
+              setWorkEndpoints((prev) => {
+                const cur = prev[norm];
+                if (!cur) return prev;
+                return { ...prev, [norm]: { ...cur, shareSlug: j.slug!.trim() } };
+              });
+            } catch {
+              shareSlugFetchStartedRef.current.delete(normalizeSynapseEndpoint(url));
+            }
+          }),
+        );
+      }
+    })();
+
     return () => { cancelled = true; };
-  }, [focusUrl, workEndpoints, synapsesLoaded]);
+  }, [synapsesLoaded, workEndpoints]);
 
   return (
     <AuthFeedbackProvider>
@@ -390,7 +445,9 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
           <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,rgba(99,102,241,0.05),transparent_60%)]" />
           <AnimatePresence mode="wait">
             {!synapsesLoaded ? (
-              <div key="loading" className="flex h-full items-center justify-center text-sm text-zinc-400">読み込み中…</div>
+              <div key="loading" className="h-full w-full">
+                <GalaxyLoadingShell />
+              </div>
             ) : focusUrl ? (
               <div key="graph" className="h-full w-full">
                 <div className={mobileViewMode === "feed" ? "h-full" : "hidden"}>

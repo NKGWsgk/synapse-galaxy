@@ -44,5 +44,11 @@ export async function resolveShareSlug(input: ShareSlugInput): Promise<string | 
     return gemini.slug;
   }
 
+  // Gemini 失敗時: タイトルが英語中心なら slugify で直接生成
+  const directSlug = slugifyAscii(title, 40);
+  if (directSlug.length >= 3 && /[a-z]/.test(directSlug) && isAcceptableShareSlug(directSlug)) {
+    return directSlug;
+  }
+
   return null;
 }
