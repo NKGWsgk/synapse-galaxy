@@ -9,6 +9,19 @@ function amazonAsin(url: URL): string | null {
   return null;
 }
 
+/** Prime Video: /gp/video/detail/ASIN から ASIN を抜く */
+function amazonPrimeVideoAsin(url: URL): string | null {
+  const m = url.pathname.match(/\/gp\/video\/detail\/([A-Z0-9]{10})/i);
+  return m?.[1]?.toUpperCase() ?? null;
+}
+
+function amazonBaseHost(host: string, fallbackHost: string): string {
+  const h = host.toLowerCase().replace(/^www\./, "");
+  if (h === "amazon.co.jp" || h.endsWith("amazon.co.jp")) return "www.amazon.co.jp";
+  if (h === "amazon.com" || h.endsWith("amazon.com")) return "www.amazon.com";
+  return fallbackHost;
+}
+
 /**
  * シナプス endpoint（source/target）比較用の正規化。
  * - 非Amazon: そのまま（hash 除去）
@@ -27,15 +40,13 @@ export function normalizeSynapseEndpoint(raw: string): string {
       }
       return u.toString();
     }
-    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    const baseHost = amazonBaseHost(u.hostname, u.hostname);
+    const videoAsin = amazonPrimeVideoAsin(u);
+    if (videoAsin) {
+      return `https://${baseHost}/gp/video/detail/${videoAsin}`;
+    }
     const asin = amazonAsin(u);
     if (asin) {
-      const baseHost =
-        host === "amazon.co.jp" || host.endsWith("amazon.co.jp")
-          ? "www.amazon.co.jp"
-          : host === "amazon.com" || host.endsWith("amazon.com")
-            ? "www.amazon.com"
-            : u.hostname;
       return `https://${baseHost}/dp/${asin}`;
     }
     u.hash = "";

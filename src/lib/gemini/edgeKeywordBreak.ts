@@ -3,6 +3,7 @@ import { findEdgeKeywordTwoLineSplit, sanitizeEdgeKeywordBreakOutput } from "../
 import {
   SYNAPSE_EDGE_AI_BREAK_FROM_CHARS,
   SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE,
+  SYNAPSE_EDGE_LABEL_MIN_CHARS_PER_LINE,
   SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE,
   SYNAPSE_EDGE_TITLE_MAX_CHARS,
 } from "../synapseLimits";
@@ -29,13 +30,13 @@ export async function suggestEdgeKeywordLineBreak(original: string): Promise<str
   if (!flatForBreak || graphemes.length > SYNAPSE_EDGE_TITLE_MAX_CHARS || graphemes.length < 2) {
     return original;
   }
-  if (graphemes.length < SYNAPSE_EDGE_AI_BREAK_FROM_CHARS) {
-    return original;
-  }
-
   const punctSplit = findEdgeKeywordTwoLineSplit(flatForBreak);
   if (punctSplit) {
     return `${punctSplit[0]}\n${punctSplit[1]}`;
+  }
+
+  if (graphemes.length < SYNAPSE_EDGE_AI_BREAK_FROM_CHARS) {
+    return original;
   }
 
   const systemInstruction =
@@ -43,10 +44,10 @@ export async function suggestEdgeKeywordLineBreak(original: string): Promise<str
     "説明や前置き、マークダウンは書かず、求められた形式の JSON だけを返してください。";
 
   const userMessage = [
-    `渡す文は ${SYNAPSE_EDGE_AI_BREAK_FROM_CHARS} 文字以上だけです（それ未満はこちらに来ません）。`,
+    `渡す文は ${SYNAPSE_EDGE_AI_BREAK_FROM_CHARS} 文字以上だけです（それ未満は句読点での自動分割を試したあと、こちらには来ません）。`,
     `また、このラベルはシステム上「最大 ${SYNAPSE_EDGE_TITLE_MAX_CHARS} 文字（Unicode で数えた字数）」までです。入力はすでにその範囲内です。改行を入れても増えるのは改行1文字分だけで、字数の上限ルールは変わりません。`,
-    `2行に分けるときは必ず「どちらの行も ${SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE} 文字以内（Unicode で数えた字数）」にしてください。目安は各行およそ ${SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE} 文字までで、なるべく均等に近い改行位置が望ましいです。この条件を満たせないときだけ改行なしで返してください。`,
-    "極端に横に長い1行はグラフ上で他のカードと重なります。短文でも改行をはさんだほうがよいときは積極的に2行にしてください。",
+    `2行に分けるときは必ず「どちらの行も ${SYNAPSE_EDGE_LABEL_MIN_CHARS_PER_LINE} 文字以上かつ ${SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE} 文字以内（Unicode で数えた字数）」にしてください。目安は各行およそ ${SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE} 文字までで、なるべく均等に近い改行位置が望ましいです。この条件を満たせないときだけ改行なしで返してください。`,
+    "読点「、」など自然な切れ目がある短文でも2行に分けたほうがグラフ上で読みやすいです。極端に横に長い1行は他のカードと重なります。",
     "適切な位置がない・切ると不自然なとき・各行18文字以内にできないときだけ、改行なしで返してください。",
     "",
     "次のどちらか一方だけです。",

@@ -1,4 +1,4 @@
-import { isAmazonUrl } from "@/lib/amazon";
+import { isAmazonUrl, isPrimeVideoPageUrl, isPrimeVideoTitleText } from "@/lib/amazon";
 
 /** Netflix OGP 等に混入するゼロ幅文字（「を観る」除去・パイプ分割を壊す） */
 const INVISIBLE_UNICODE_RE = /[\uFEFF\u200B-\u200D\u2060\u00AD]/g;
@@ -59,8 +59,42 @@ const WATCH_ACTION_SUFFIX_RE =
 /** 英語 Netflix OGP: "Watch The Queen's Gambit | …" */
 const WATCH_PREFIX_RE = /^watch\s+/i;
 
-/** 作品名の外枠だけ（【レーベル】は stripPublisherImprints で扱う） */
-const OUTER_WRAP_RE = /^[\s「『\[(〈《]+|[\s」』\])〉》]+$/gu;
+/** 映画館・配信サイト OGP の「映画『タイトル』大ヒット上映中」等 */
+const QUOTED_TITLE_RE = /[『「]([^』」]+)[』」]/u;
+const MEDIA_PREFIX_RE =
+  /^(?:映画|ドラマ|テレビ(?:ドラマ|番組|アニメ)?|アニメ(?:映画|作品)?|実写(?:化)?|シリーズ|作品)\s*/u;
+const PROMO_SUFFIX_RE =
+  /(?:大ヒット|話題|好評|注目(?:の|)?)?(?:公開|上映|配信)(?:中|開始|スタート)?(?:！!)?\s*$/u;
+
+function isPrimeVideoTitleContext(pageUrl: string, title: string): boolean {
+  return isPrimeVideoPageUrl(pageUrl) || (isAmazonUrl(pageUrl) && isPrimeVideoTitleText(title));
+}
+
+/** 外側が宣伝文句のとき、『』「」内の作品名を優先 */
+function preferQuotedWorkTitle(t: string): string {
+  const m = t.match(QUOTED_TITLE_RE);
+  if (!m?.[1]) return t;
+  const inner = normalizeWhitespace(m[1]);
+  if (!inner) return t;
+  const outer = normalizeWhitespace(t.replace(m[0], " "));
+  const promotionalOuter = /(?:映画|ドラマ|アニメ|上映|配信|公開|ヒット|好評|話題|注目)/u.test(outer);
+  if (promotionalOuter) return inner;
+  if (/^(?:映画|ドラマ|アニメ)/u.test(outer) && outer.length > inner.length + 2) return inner;
+  return t;
+}
+
+function stripPromotionalFraming(t: string): string {
+  let s = t;
+  for (let i = 0; i < 3; i++) {
+    const next = normalizeWhitespace(s.replace(MEDIA_PREFIX_RE, "").replace(PROMO_SUFFIX_RE, "").trim());
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+}
+
+/** 作品名の外枠だけ（【レーベル】は stripPublisherImprints で扱う。()[] は吹替版等の作品名に使うので含めない） */
+const OUTER_WRAP_RE = /^[\s「『〈《]+|[\s」』〉》]+$/gu;
 
 /** 巻次・上下巻（末尾のみ。作品名の一部は残す） */
 const VOLUME_SUFFIX_RE =
@@ -169,8 +203,7 @@ function stripStreamingPipeSegments(t: string, pageUrl: string): string {
       (h.includes("netflix.com") && /netflix/i.test(s)) ||
       (h.includes("disneyplus.com") && /disney|ディズニー/i.test(s)) ||
       ((h.includes("hulu.com") || h.includes("hulu.jp")) && /hulu/i.test(s)) ||
-      ((h.includes("primevideo.com") || (h.includes("amazon.") && pageUrl.includes("/gp/video"))) &&
-        /prime\s*video|プライム\s*ビデオ|amazon/i.test(s)) ||
+      isPrimeVideoTitleContext(pageUrl, s) ||
       ((h === "video.unext.jp" || h.endsWith(".video.unext.jp")) && /u-?next|ユーネクスト/i.test(s));
 
     if (platformTail) {
@@ -253,10 +286,12 @@ export function extractPureWorkTitle(title: string | null | undefined, pageUrl: 
   if (!raw) return null;
 
   let t = stripOuterWrappers(stripInvisibleUnicode(raw));
+  t = preferQuotedWorkTitle(t);
+  t = stripPromotionalFraming(t);
   t = t.replace(LEADING_BRACKETED_IMPRINT_RE, "").replace(/^】+/, "");
   t = stripPlatformPrefixes(t);
 
-  if (isAmazonUrl(pageUrl)) {
+  if (isAmazonUrl(pageUrl) && !isPrimeVideoTitleContext(pageUrl, raw)) {
     t = stripAmazonCatalogSegments(t);
   } else {
     t = stripStreamingPipeSegments(t, pageUrl);

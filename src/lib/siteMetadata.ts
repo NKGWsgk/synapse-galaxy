@@ -42,18 +42,28 @@ export const SITE_KEYWORDS = [
   "OGP",
 ];
 
-export function getSiteUrl(): URL {
-  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (fromEnv) {
-    try {
-      const normalized = fromEnv.endsWith("/") ? fromEnv.slice(0, -1) : fromEnv;
-      return new URL(normalized);
-    } catch {
-      /* fall through */
-    }
+function urlFromHost(host: string): URL | null {
+  const trimmed = host.trim();
+  if (!trimmed) return null;
+  try {
+    return new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`);
+  } catch {
+    return null;
   }
-  const vercel = process.env.VERCEL_URL?.trim();
-  if (vercel) return new URL(`https://${vercel}`);
+}
+
+/** SEO / OGP / sitemap 用の正規オリジン（プレビュー URL ではなく本番ドメインを優先） */
+export function getSiteUrl(): URL {
+  const fromEnv = urlFromHost(process.env.NEXT_PUBLIC_SITE_URL ?? "");
+  if (fromEnv) return fromEnv;
+
+  // Vercel: VERCEL_URL はデプロイごとのプレビュー URL になり得る（OGP クローラーが 401 で弾かれる）
+  const production = urlFromHost(process.env.VERCEL_PROJECT_PRODUCTION_URL ?? "");
+  if (production) return production;
+
+  const vercel = urlFromHost(process.env.VERCEL_URL ?? "");
+  if (vercel) return vercel;
+
   return new URL("http://localhost:3000");
 }
 

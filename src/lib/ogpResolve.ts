@@ -1,4 +1,10 @@
-import { amazonAsinFromUrl, isAmazonUrl } from "@/lib/amazon";
+import {
+  amazonAsinFromUrl,
+  canonicalAmazonMediaUrl,
+  isAmazonUrl,
+  isPrimeVideoContent,
+  isPrimeVideoPageUrl,
+} from "@/lib/amazon";
 import { fetchAmazonProductImage, fetchOgp, OGP_BROWSER_UA, type OgpResult } from "@/lib/ogp";
 import { extractPureWorkTitle, isWeakStreamingPlatformTitle } from "@/lib/pureWorkTitle";
 
@@ -86,11 +92,25 @@ export function needsTitleRefresh(title: string | null | undefined, pageUrl: str
     if (host.includes("amazon.co.jp") && pageUrl.includes("/gp/video")) {
       if (tl.includes("prime video") && t.length < 24) return true;
     }
+    if (isPrimeVideoContent(pageUrl, { title: t })) {
+      if (/を\s*(?:観|見|視聴)/u.test(t)) return true;
+      if (tl.includes("prime video")) return true;
+      if (isWeakStreamingPlatformTitle(t, pageUrl)) return true;
+    }
   } catch {
     // ignore
   }
 
   return false;
+}
+
+/** 作品カード表示に DB の title + image が十分か（不足ならライブ取得へ） */
+export function needsWorkDisplayRefresh(
+  title: string | null | undefined,
+  imageUrl: string | null | undefined,
+  pageUrl: string,
+): boolean {
+  return needsTitleRefresh(title, pageUrl) || needsImageRefresh(imageUrl);
 }
 
 export function needsImageRefresh(imageUrl: string | null | undefined): boolean {
@@ -125,6 +145,19 @@ export function pureTitleForResponse(title: string | null | undefined, pageUrl: 
   return extractPureWorkTitle(t, pageUrl) ?? cleanTitleForHost(t, pageUrl);
 }
 
+/** ライブ OGP と DB 既存タイトルをマージ。弱い Amazon ホスト名で既存の作品名を潰さない */
+export function mergeOgpTitle(
+  fetchedTitle: string | null | undefined,
+  existingTitle: string | null | undefined,
+  pageUrl: string,
+): string | null {
+  const fetched = pureTitleForResponse(fetchedTitle, pageUrl);
+  const existing = pureTitleForResponse(existingTitle, pageUrl);
+  if (fetched && !needsTitleRefresh(fetched, pageUrl)) return fetched;
+  if (existing && !needsTitleRefresh(existing, pageUrl)) return existing;
+  return fetched ?? existing;
+}
+
 async function fetchOpenBdTitle(isbn10: string): Promise<string | null> {
   try {
     const r = await fetch(`https://api.openbd.jp/v1/get?isbn=${isbn10}`, { signal: AbortSignal.timeout(5000) });
@@ -142,39 +175,50 @@ async function pickVerifiedCover(candidates: string[], referer: string): Promise
   return null;
 }
 
-/** Amazon: OpenBD / 再スクレイプでタイトル・表紙を補完 */
+/** Amazon / Prime Video: OpenBD / 再スクレイプでタイトル・表紙を補完 */
 export async function enrichAmazonOgp(pageUrl: string, og: OgpResult): Promise<OgpResult> {
   if (!isAmazonUrl(pageUrl)) return og;
 
-  const asin = amazonAsinFromUrl(pageUrl);
-  if (!asin) return og;
+  const effectiveUrl = canonicalAmazonMediaUrl(pageUrl, og.title);
+  const primeVideo = isPrimeVideoContent(effectiveUrl, { title: og.title });
+  const asin = amazonAsinFromUrl(effectiveUrl);
+  if (!asin && !primeVideo) return og;
 
   const result = { ...og };
 
-  // OpenBD タイトルは ISBN-10 直 lookup のみ（ISBN-13 変換は別書籍に当たりやすい）
-  if (needsTitleRefresh(result.title, pageUrl) && /^\d{10}$/.test(asin)) {
+  // OpenBD タイトルは ISBN-10 商品のみ（Prime Video の B0… ASIN は対象外）
+  if (
+    !primeVideo &&
+    asin &&
+    needsTitleRefresh(result.title, effectiveUrl) &&
+    /^\d{10}$/.test(asin)
+  ) {
     const openBdTitle = await fetchOpenBdTitle(asin);
     if (openBdTitle) result.title = openBdTitle;
   }
 
   let imageUrl = result.imageUrl;
-  if (imageUrl && !(await verifyRemoteImageUrl(imageUrl, pageUrl))) {
+  if (imageUrl && !(await verifyRemoteImageUrl(imageUrl, effectiveUrl))) {
     imageUrl = null;
   }
 
-  if (!imageUrl) {
+  if (!imageUrl && asin && !primeVideo) {
     const coverCandidates: string[] = [];
     if (/^\d{10}$/.test(asin)) {
       coverCandidates.push(`https://cover.openbd.jp/${isbn10ToIsbn13(asin)}.jpg`);
       coverCandidates.push(`https://cover.openbd.jp/${asin}.jpg`);
     }
-    imageUrl = (await pickVerifiedCover(coverCandidates, pageUrl)) ?? null;
+    imageUrl = (await pickVerifiedCover(coverCandidates, effectiveUrl)) ?? null;
   }
 
   if (!imageUrl) {
-    const amazonImg = await fetchAmazonProductImage(pageUrl);
-    if (amazonImg && (await verifyRemoteImageUrl(amazonImg, pageUrl))) {
-      imageUrl = amazonImg;
+    const scrapeUrls = [...new Set([pageUrl, effectiveUrl])];
+    for (const scrapeUrl of scrapeUrls) {
+      const amazonImg = await fetchAmazonProductImage(scrapeUrl);
+      if (amazonImg && (await verifyRemoteImageUrl(amazonImg, effectiveUrl))) {
+        imageUrl = amazonImg;
+        break;
+      }
     }
   }
 

@@ -75,7 +75,7 @@ export async function generateShareSlugWithGemini(
       config: {
         systemInstruction: buildSystemInstruction(opts?.strictEnglish ?? false),
         temperature: 0.1,
-        maxOutputTokens: 128,
+        maxOutputTokens: 512,
         responseMimeType: "application/json",
       },
     });
@@ -85,7 +85,12 @@ export async function generateShareSlugWithGemini(
       return { ok: false, message: "応答が空です" };
     }
 
-    const parsed = JSON.parse(text) as { slug?: unknown };
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return { ok: false, message: `JSON not found: ${text.slice(0, 80)}` };
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]) as { slug?: unknown };
     if (typeof parsed.slug !== "string" || !parsed.slug.trim()) {
       return { ok: false, message: "slug がありません" };
     }

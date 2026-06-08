@@ -1,6 +1,7 @@
 import { jaKeywordSoftBreakHints } from "./jaKeywordLineBreak";
 import {
   SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE,
+  SYNAPSE_EDGE_LABEL_MIN_CHARS_PER_LINE,
   SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE,
 } from "./synapseLimits";
 
@@ -48,12 +49,11 @@ const EDGE_KEYWORD_BREAK_AFTER = new Set(["、", "。", "，", ",", "."]);
 
 /**
  * 句読点の直後で2行に分ける（AI 失敗時・表示フォールバック・保存前の決定論的改行）。
- * 両行が上限以内かつ助詞1字行にならない候補のうち、読点優先・行長バランスが良いものを選ぶ。
+ * 全体が15文字以内でも切れ目があれば分割可。各行は MIN〜MAX グリフ、助詞1字行は不可。
  */
 export function findEdgeKeywordTwoLineSplit(flat: string): readonly [string, string] | null {
   const t = flat.normalize("NFC").replace(/\u200b/g, "");
-  const g = [...t];
-  if (g.length <= SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE) return null;
+  const minPerLine = SYNAPSE_EDGE_LABEL_MIN_CHARS_PER_LINE;
 
   type Cand = { head: string; tail: string; punctRank: number; imbalance: number };
   let best: Cand | null = null;
@@ -70,6 +70,8 @@ export function findEdgeKeywordTwoLineSplit(flat: string): readonly [string, str
     const headG = [...head];
     const tailG = [...tail];
     if (
+      headG.length < minPerLine ||
+      tailG.length < minPerLine ||
       headG.length > SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE ||
       tailG.length > SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE
     ) {
@@ -120,11 +122,11 @@ export function getEdgeKeywordRenderPlan(raw: string): EdgeKeywordRenderPlan {
 function splitEdgeLabelForPillDisplay(flat: string): string[] {
   const t = flat.normalize("NFC").replace(/\u200b/g, "");
   const g = [...t];
+  const punctSplit = findEdgeKeywordTwoLineSplit(t);
+  if (punctSplit) return [...punctSplit];
   if (g.length <= SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE) {
     return [jaKeywordSoftBreakHints(t)];
   }
-  const punctSplit = findEdgeKeywordTwoLineSplit(t);
-  if (punctSplit) return [...punctSplit];
   const n = SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE;
   return [g.slice(0, n).join(""), g.slice(n).join("")];
 }

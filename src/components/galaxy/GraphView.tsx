@@ -4,7 +4,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3-force";
 
-import { isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
+import { resolveContentDisplayTitle } from "@/lib/ogpDisplay";
+import { useWorkOgpMini } from "@/hooks/useWorkOgpMini";
+import { fetchWorkOgpFull } from "@/lib/workOgpFull";
 import { getEdgeKeywordPillLines } from "@/lib/edgeKeywordDisplay";
 import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
 import {
@@ -36,8 +38,6 @@ import {
   OgpTileMedia,
   SynapseConnectionTitles,
   ConnectionWorksLine,
-  ogpMiniCache,
-  fetchOgpMiniPayload,
   synapseToDims,
   computeNodeDimProfile,
   getDominantDim,
@@ -1009,36 +1009,20 @@ function rayRectIntersection(
 
 function GraphCard({
   url,
+  workMap,
+  workKey,
   isFocus,
   loadingHint,
   onPointerDown,
 }: {
   url: string;
+  workMap: WorkEndpointMap;
+  workKey: string;
   isFocus: boolean;
   loadingHint?: boolean;
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
 }) {
-  const [data, setData] = useState<{ title: string | null; imageUrl: string | null } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [imgError, setImgError] = useState(false);
-
-  useEffect(() => {
-    let cancel = false;
-    const hit = ogpMiniCache.get(url);
-    if (hit) {
-      const label = resolveContentDisplayTitle(hit.title, url);
-      if (!isWeakContentTitleLabel(label, url) && (hit.imageUrl ?? "").trim()) {
-        setData(hit); setLoading(false); return;
-      }
-      ogpMiniCache.delete(url);
-    }
-    setLoading(true);
-    void fetchOgpMiniPayload(url)
-      .then((o) => { if (!cancel) setData(o ?? { title: null, imageUrl: null }); })
-      .catch(() => { if (!cancel) setData({ title: null, imageUrl: null }); })
-      .finally(() => { if (!cancel) setLoading(false); });
-    return () => { cancel = true; };
-  }, [url]);
+  const { data, loading, imgError, setImgError } = useWorkOgpMini(url, workMap, workKey);
 
   const displayTitle = resolveContentDisplayTitle(data?.title ?? null, url).slice(0, 60);
   const showImage = !!data?.imageUrl && !imgError;
@@ -1056,12 +1040,13 @@ function GraphCard({
       <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-t-xl">
         <OgpTileMedia
           pageUrl={url}
+          title={data?.title}
           imageUrl={showImage ? data!.imageUrl : null}
           slot="gridMini"
           loading={loading}
           onError={() => setImgError(true)}
         />
-        <ContentPlatformMark pageUrl={url} />
+        <ContentPlatformMark pageUrl={url} title={data?.title} />
       </div>
       <div className="relative flex min-h-[2.875rem] shrink-0 flex-col justify-center overflow-visible rounded-b-xl bg-white px-1.5 py-1">
         <p
@@ -1115,6 +1100,25 @@ function edgeKeywordWorldHalfExtents(keyword: string, narrow: boolean): { hw: nu
   const { w, h } = measureEdgeKeywordPill(keyword);
   const margin = narrow ? 6 : 3;
   return { hw: w / 2 + margin, hh: h / 2 + margin };
+}
+
+/** pill 矩形を辺方向へ投影した半幅（線の gap 計算用） */
+function pillHalfExtentAlongLine(w: number, h: number, ux: number, uy: number): number {
+  return Math.abs(ux) * (w / 2) + Math.abs(uy) * (h / 2);
+}
+
+/** ラベル中心と辺の垂直距離（小さいほど「線の上」） */
+function labelPerpendicularDistanceFromEdge(
+  x0: number,
+  y0: number,
+  ux: number,
+  uy: number,
+  lx: number,
+  ly: number,
+): number {
+  const vx = lx - x0;
+  const vy = ly - y0;
+  return Math.abs(vx * uy - vy * ux);
 }
 
 function EdgeKeywordSvg({
@@ -2483,29 +2487,22 @@ export function GraphView({
     setDescExpanded(false);
     setDetailImgError(false);
     setDetailOgpLoading(true);
-    const cached = ogpMiniCache.get(detailUrl);
-    if (cached?.title || cached?.imageUrl) {
-      setDetailOgp({ title: cached.title, imageUrl: cached.imageUrl, description: null, siteName: null });
-    } else {
-      setDetailOgp(null);
-    }
-    async function load(refresh: boolean) {
-      const qs = new URLSearchParams({ url: detailUrl });
-      if (refresh) qs.set("refresh", "1");
-      const r = await fetch(`/api/ogp?${qs}`, { cache: "no-store" });
-      const data = (await r.json()) as { error?: string; title?: string | null; imageUrl?: string | null; description?: string | null; siteName?: string | null };
-      if (cancelled) return;
-      if (data.error) { setDetailOgp(null); return; }
-      setDetailOgp({ title: data.title ?? null, imageUrl: data.imageUrl ?? null, description: data.description ?? null, siteName: data.siteName ?? null });
-      const label = resolveContentDisplayTitle(data.title ?? null, detailUrl);
-      if (!refresh && (isWeakContentTitleLabel(label, detailUrl) || !(data.imageUrl ?? "").trim())) {
-        await load(true);
-      }
-    }
-    void load(false).catch(() => { if (!cancelled) setDetailOgp(null); })
+    setDetailOgp(null);
+    void fetchWorkOgpFull(detailUrl, workMap, endpointWorkKey(detailUrl, workMap))
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) { setDetailOgp(null); return; }
+        setDetailOgp({
+          title: data.title,
+          imageUrl: data.imageUrl,
+          description: data.description,
+          siteName: null,
+        });
+      })
+      .catch(() => { if (!cancelled) setDetailOgp(null); })
       .finally(() => { if (!cancelled) setDetailOgpLoading(false); });
     return () => { cancelled = true; };
-  }, [detailOpen, detailUrl]);
+  }, [detailOpen, detailUrl, workMap]);
 
   // ESC closes modals
   useEffect(() => {
@@ -2663,7 +2660,11 @@ export function GraphView({
           : narrowViewport
             ? 120
             : 160;
+        // 中点 → 辺に沿った移動 → 垂直 → 組み合わせの順。垂直を先に試すと線から外れやすい。
         const tryOffsets: Array<[number, number]> = [[0, 0]];
+        for (const along of alongSteps) {
+          tryOffsets.push([ux * along, uy * along]);
+        }
         for (const d of perpSteps) {
           tryOffsets.push([perpX * d, perpY * d], [-perpX * d, -perpY * d]);
         }
@@ -2709,9 +2710,52 @@ export function GraphView({
       const stroke = DIM_STROKE[l.dominant];
       const synCount = l.synapses.length;
       const lineWidth = Math.min(5, 1.6 + Math.log2(synCount) * 1.4);
+      const pillMeasure = l.keyword ? measureEdgeKeywordPill(l.keyword) : null;
+      const labelOnLine = pillMeasure != null
+        && labelPerpendicularDistanceFromEdge(srcEdge.x, srcEdge.y, ux, uy, labelX, labelY) <= 10;
+      const visibleLen = len - ARROW_LEN;
+      let lineBody: React.ReactNode;
+      if (labelOnLine && pillMeasure && visibleLen > 24) {
+        const gapHalf = pillHalfExtentAlongLine(pillMeasure.w, pillMeasure.h, ux, uy) + 4;
+        const alongFromSrc = (labelX - srcEdge.x) * ux + (labelY - srcEdge.y) * uy;
+        const gapStart = Math.max(2, alongFromSrc - gapHalf);
+        const gapEnd = Math.min(visibleLen - 2, alongFromSrc + gapHalf);
+        if (gapEnd - gapStart >= 4) {
+          lineBody = (
+            <>
+              <line
+                x1={srcEdge.x}
+                y1={srcEdge.y}
+                x2={srcEdge.x + ux * gapStart}
+                y2={srcEdge.y + uy * gapStart}
+                stroke={stroke}
+                strokeWidth={lineWidth}
+                strokeLinecap="butt"
+              />
+              <line
+                x1={srcEdge.x + ux * gapEnd}
+                y1={srcEdge.y + uy * gapEnd}
+                x2={lineEndX}
+                y2={lineEndY}
+                stroke={stroke}
+                strokeWidth={lineWidth}
+                strokeLinecap="butt"
+              />
+            </>
+          );
+        } else {
+          lineBody = (
+            <line x1={srcEdge.x} y1={srcEdge.y} x2={lineEndX} y2={lineEndY} stroke={stroke} strokeWidth={lineWidth} strokeLinecap="butt" />
+          );
+        }
+      } else {
+        lineBody = (
+          <line x1={srcEdge.x} y1={srcEdge.y} x2={lineEndX} y2={lineEndY} stroke={stroke} strokeWidth={lineWidth} strokeLinecap="butt" />
+        );
+      }
       edgeLineElements.push(
         <g key={i} pointerEvents="none">
-          <line x1={srcEdge.x} y1={srcEdge.y} x2={lineEndX} y2={lineEndY} stroke={stroke} strokeWidth={lineWidth} strokeLinecap="butt" />
+          {lineBody}
           <line x1={lineEndX} y1={lineEndY} x2={tipPt.x} y2={tipPt.y} stroke="transparent" strokeWidth={0.1} markerEnd={`url(#arrow-${l.dominant})`} />
         </g>,
       );
@@ -2818,6 +2862,8 @@ export function GraphView({
               >
                 <GraphCard
                   url={n.url}
+                  workMap={workMap}
+                  workKey={n.norm}
                   isFocus={n.isHub}
                   onPointerDown={onNodePointerDown(n.norm, n.url, n.isHub)}
                 />

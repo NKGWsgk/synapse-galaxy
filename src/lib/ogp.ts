@@ -1,5 +1,5 @@
 import { load, type CheerioAPI } from "cheerio";
-import { isAmazonUrl } from "@/lib/amazon";
+import { isAmazonUrl, isPrimeVideoContent } from "@/lib/amazon";
 import { formatWorkDisplayTitle } from "@/lib/ogpDisplay";
 
 export type OgpResult = {
@@ -147,6 +147,32 @@ function normalizeWhitespace(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+/** Prime Video 作品ページ: OGP 画像が無いので pv-target-images ポスターを拾う */
+function pickPrimeVideoPosterFromHtml(html: string): string | null {
+  const matches = [
+    ...html.matchAll(
+      /https:\/\/m\.media-amazon\.com\/images\/S\/pv-target-images\/[^"'\s>]+\.(?:jpg|jpeg|png|webp)/gi,
+    ),
+  ];
+  if (matches.length === 0) return null;
+  const urls = [...new Set(matches.map((m) => m[0]))];
+  urls.sort((a, b) => {
+    const sa = Number(a.match(/_SX(\d+)_/)?.[1] ?? 0);
+    const sb = Number(b.match(/_SX(\d+)_/)?.[1] ?? 0);
+    return sb - sa;
+  });
+  return urls[0] ?? null;
+}
+
+/** Prime Video 作品ページ: 「ミッキー17を観る | Prime Video」より DOM タイトルを優先 */
+function pickPrimeVideoDomTitle($: CheerioAPI): string | null {
+  const el = $('[data-automation-id="title"]').first();
+  if (!el.length) return null;
+  el.find("script, style, noscript").remove();
+  const t = normalizeWhitespace(el.text());
+  return t.length >= 2 ? t : null;
+}
+
 /** Amazon 商品ページ: OGP だけだと空・不十分なことがあるので #productTitle を使う */
 function pickAmazonDomTitle($: CheerioAPI): string | null {
   const el = $("#productTitle").first();
@@ -248,7 +274,11 @@ export async function fetchAmazonProductImage(pageUrl: string): Promise<string |
     const html = await res.text();
     if (html.length < 20_000) return null;
     const $ = load(html);
-    return pickImageUrl($, finalUrl);
+    let imageUrl = pickImageUrl($, finalUrl);
+    if (!imageUrl && isPrimeVideoContent(finalUrl, { html })) {
+      imageUrl = pickPrimeVideoPosterFromHtml(html);
+    }
+    return imageUrl;
   } catch {
     return null;
   }
@@ -289,10 +319,26 @@ export async function fetchOgp(url: string): Promise<OgpResult> {
     title = cleanTitleForHost(title, finalUrl);
   }
 
+  if (isPrimeVideoContent(finalUrl, { html, title })) {
+    const domTitle = pickPrimeVideoDomTitle($);
+    if (domTitle) {
+      const t = title?.trim() ?? "";
+      const weakOg =
+        !t ||
+        t.length < 4 ||
+        /prime\s*video/i.test(t) ||
+        /を\s*(?:観|見|視聴)/u.test(t);
+      if (weakOg) title = domTitle;
+    }
+  }
+
   const description = pickDescription($, finalUrl, title);
 
   const siteName = metaContent($, "og:site_name");
-  const imageUrl = pickImageUrl($, finalUrl);
+  let imageUrl = pickImageUrl($, finalUrl);
+  if (!imageUrl && isPrimeVideoContent(finalUrl, { html, title })) {
+    imageUrl = pickPrimeVideoPosterFromHtml(html);
+  }
 
   const uiTitle = formatWorkDisplayTitle(title, finalUrl);
   if (uiTitle) title = uiTitle;

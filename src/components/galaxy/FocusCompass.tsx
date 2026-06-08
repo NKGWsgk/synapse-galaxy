@@ -13,6 +13,9 @@ import { useAuthFeedback } from "@/components/galaxy/AuthFeedback";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { endpointWorkKey, type WorkEndpointMap } from "@/lib/workEndpoint";
+import { useWorkOgpMini } from "@/hooks/useWorkOgpMini";
+import { fetchWorkOgpFull } from "@/lib/workOgpFull";
+import { ogpMiniCache } from "@/lib/workOgpMini";
 import { isAmazonUrl } from "@/lib/amazon";
 import { withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { createBrowserClient } from "@/lib/supabase/browser";
@@ -144,27 +147,7 @@ function dedupeRingEdges(edges: RingEdge[]): RingEdge[] {
     .sort((a, b) => normalizeSynapseEndpoint(a.previewUrl).localeCompare(normalizeSynapseEndpoint(b.previewUrl)));
 }
 
-export const ogpMiniCache = new Map<string, { title: string | null; imageUrl: string | null }>();
-
-export async function fetchOgpMiniPayload(url: string): Promise<{ title: string | null; imageUrl: string | null } | null> {
-  async function load(refresh: boolean) {
-    const qs = new URLSearchParams({ url });
-    if (refresh) qs.set("refresh", "1");
-    const r = await fetch(`/api/ogp?${qs}`, { cache: "no-store" });
-    const j = (await r.json()) as { error?: string; title?: string | null; imageUrl?: string | null };
-    if (j.error) return null;
-    return { title: j.title ?? null, imageUrl: j.imageUrl ?? null };
-  }
-  const o = await load(false);
-  if (!o) return null;
-  const label = resolveContentDisplayTitle(o.title, url);
-  if (isWeakContentTitleLabel(label, url) || !(o.imageUrl ?? "").trim()) {
-    const o2 = await load(true);
-    if (o2) { ogpMiniCache.set(url, o2); return o2; }
-  }
-  ogpMiniCache.set(url, o);
-  return o;
-}
+export { fetchOgpMiniPayload, ogpMiniCache, resolveWorkOgpMini } from "@/lib/workOgpMini";
 
 async function fetchOgpDisplayLabel(url: string): Promise<string> {
   const hit = ogpMiniCache.get(url);
@@ -253,16 +236,17 @@ export function LikeButton({ synapse, accessToken }: { synapse: SynapseRow; acce
 // ── OGPタイル ────────────────────────────────────────────────────────────────
 
 export function OgpTileMedia({
-  pageUrl, imageUrl, slot, loading, eager, onError,
+  pageUrl, title, imageUrl, slot, loading, eager, onError,
 }: {
   pageUrl: string;
+  title?: string | null;
   imageUrl: string | null | undefined;
   slot: "gridMini" | "gridHero" | "modal" | "inlineThumb" | "feedConnection";
   loading: boolean;
   eager?: boolean;
   onError?: () => void;
 }) {
-  const L = ogpImageLayout(pageUrl, slot);
+  const L = ogpImageLayout(pageUrl, slot, title);
   const pulseBg = L.mode === "video" ? "bg-zinc-800/70" : "bg-zinc-200/80";
   const src = imageUrl ? getOgpImageDisplaySrc(imageUrl, pageUrl) : "";
   return (
@@ -507,6 +491,7 @@ function computeNodeGravity(norm: string, focusNorm: string, synapses: SynapseRo
 
 function OgpMiniCell({
   synapse, previewUrl, pickUrl, dim, onPick, gravity, dimAlignment, synapseDims, workPotential, onHoverChange,
+  workMap = {},
 }: {
   synapse: SynapseRow | null;
   previewUrl?: string;
@@ -520,31 +505,11 @@ function OgpMiniCell({
   workPotential?: DimProfile | null;
   /** hover でこのセルに紐づく synapse をハイライト */
   onHoverChange?: (id: string | null) => void;
+  workMap?: WorkEndpointMap;
 }) {
-  const [data, setData] = useState<{ title: string | null; imageUrl: string | null } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [imgError, setImgError] = useState(false);
   const url = synapse ? (previewUrl ?? synapse.target_url) : undefined;
-
-  useEffect(() => {
-    if (!url) { setData(null); setLoading(false); return; }
-    const hit = ogpMiniCache.get(url);
-    if (hit) {
-      const label = resolveContentDisplayTitle(hit.title, url);
-      if (!isWeakContentTitleLabel(label, url) && (hit.imageUrl ?? "").trim()) {
-        setData(hit); setLoading(false); return;
-      }
-      ogpMiniCache.delete(url);
-    }
-    let cancel = false;
-    setLoading(true);
-    setImgError(false);
-    void fetchOgpMiniPayload(url)
-      .then((o) => { if (cancel) return; setData(o ?? { title: null, imageUrl: null }); })
-      .catch(() => { if (!cancel) setData({ title: null, imageUrl: null }); })
-      .finally(() => { if (!cancel) setLoading(false); });
-    return () => { cancel = true; };
-  }, [url]);
+  const workKey = url ? endpointWorkKey(url, workMap) : undefined;
+  const { data, loading, imgError, setImgError } = useWorkOgpMini(url, workMap, workKey);
 
   if (!synapse) return <div className="h-full w-full min-h-0 rounded-lg bg-zinc-100/70" />;
 
@@ -601,8 +566,8 @@ function OgpMiniCell({
       ) : (
         <>
           <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
-            <OgpTileMedia pageUrl={url ?? synapse.target_url} imageUrl={showImage ? data?.imageUrl : null} slot="gridMini" loading={false} onError={() => setImgError(true)} />
-            <ContentPlatformMark pageUrl={url ?? synapse.target_url} />
+            <OgpTileMedia pageUrl={url ?? synapse.target_url} title={data?.title} imageUrl={showImage ? data?.imageUrl : null} slot="gridMini" loading={false} onError={() => setImgError(true)} />
+            <ContentPlatformMark pageUrl={url ?? synapse.target_url} title={data?.title} />
           </div>
           <div className="relative flex min-h-[2.75rem] shrink-0 flex-col justify-center px-1 py-1 sm:min-h-[2.875rem] sm:px-1.5 sm:py-1">
             <p
@@ -1531,26 +1496,15 @@ function findEmptyGridCell(
 
 /** 全体マップの1セル（OGP画像サムネイル付きカード） */
 function MapGridCell({
-  url, isFocus, onPick,
+  url, isFocus, onPick, workMap = {},
 }: {
   url: string;
   isFocus: boolean;
   onPick: () => void;
+  workMap?: WorkEndpointMap;
 }) {
-  const [data, setData] = useState<{ title: string | null; imageUrl: string | null } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [imgError, setImgError] = useState(false);
-
-  useEffect(() => {
-    let cancel = false;
-    const hit = ogpMiniCache.get(url);
-    if (hit) { setData(hit); setLoading(false); return; }
-    setLoading(true);
-    void fetchOgpMiniPayload(url)
-      .then((o) => { if (!cancel) { setData(o ?? { title: null, imageUrl: null }); setLoading(false); } })
-      .catch(() => { if (!cancel) { setData({ title: null, imageUrl: null }); setLoading(false); } });
-    return () => { cancel = true; };
-  }, [url]);
+  const workKey = endpointWorkKey(url, workMap);
+  const { data, loading, imgError, setImgError } = useWorkOgpMini(url, workMap, workKey);
 
   const displayTitle = resolveContentDisplayTitle(data?.title ?? null, url).slice(0, 28);
   const showImage = !imgError && !!data?.imageUrl;
@@ -1569,6 +1523,7 @@ function MapGridCell({
       <div className="relative min-h-0 w-full flex-1 overflow-hidden">
         <OgpTileMedia
           pageUrl={url}
+          title={data?.title}
           imageUrl={showImage ? data!.imageUrl : null}
           slot="gridMini"
           loading={loading}
@@ -1577,7 +1532,7 @@ function MapGridCell({
         {isFocus && (
           <div className="pointer-events-none absolute inset-0 bg-indigo-500/8" />
         )}
-        <ContentPlatformMark pageUrl={url} />
+        <ContentPlatformMark pageUrl={url} title={data?.title} />
       </div>
       {/* タイトル */}
       <p className="shrink-0 line-clamp-2 px-1 py-0.5 text-center text-[7px] leading-tight text-zinc-300">
@@ -1834,7 +1789,6 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    // リングセルキャッシュがあれば即座に表示（フォーカス切替アニメ中のちらつき防止）
     setOgpRefreshing(true);
     const cached = ogpMiniCache.get(focusUrl);
     if (cached?.title || cached?.imageUrl) {
@@ -1842,27 +1796,28 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
       setOgpLoading(false);
       setImgError(false);
     } else {
-      setOgpLoading(true); setImgError(false); setOgp(null);
+      setOgpLoading(true);
+      setImgError(false);
+      setOgp(null);
     }
-    async function loadFocusOgp(refresh: boolean) {
-      const qs = new URLSearchParams({ url: focusUrl });
-      if (refresh) qs.set("refresh", "1");
-      const r = await fetch(`/api/ogp?${qs}`, { cache: "no-store" });
-      const data = (await r.json()) as { error?: string; title?: string | null; imageUrl?: string | null; description?: string | null; siteName?: string | null };
-      if (cancelled) return;
-      if (data.error) { setOgp(null); return; }
-      setOgp({ title: data.title ?? null, imageUrl: data.imageUrl ?? null, description: data.description ?? null, siteName: data.siteName ?? null });
-      const label = resolveContentDisplayTitle(data.title ?? null, focusUrl);
-      if (!refresh && (isWeakContentTitleLabel(label, focusUrl) || !(data.imageUrl ?? "").trim())) {
-        await loadFocusOgp(true);
-      }
-    }
-    void loadFocusOgp(false).catch(() => { if (!cancelled) setOgp(null); }).finally(() => {
-      if (!cancelled) {
-        setOgpLoading(false);
-        setOgpRefreshing(false);
-      }
-    });
+    void fetchWorkOgpFull(focusUrl)
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) { setOgp(null); return; }
+        setOgp({
+          title: data.title,
+          imageUrl: data.imageUrl,
+          description: data.description,
+          siteName: null,
+        });
+      })
+      .catch(() => { if (!cancelled) setOgp(null); })
+      .finally(() => {
+        if (!cancelled) {
+          setOgpLoading(false);
+          setOgpRefreshing(false);
+        }
+      });
     return () => { cancelled = true; };
   }, [focusUrl]);
 
@@ -2025,11 +1980,11 @@ export function FocusCompass({ focusUrl, synapses, onFocusUrl }: Props) {
               <>
                   <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
                 {ogp?.imageUrl && !imgError ? (
-                      <OgpTileMedia pageUrl={focusUrl} imageUrl={ogp.imageUrl} slot="gridHero" loading={false} eager onError={() => setImgError(true)} />
+                      <OgpTileMedia pageUrl={focusUrl} title={ogp?.title} imageUrl={ogp.imageUrl} slot="gridHero" loading={false} eager onError={() => setImgError(true)} />
                     ) : (
                       <div className="min-h-0 w-full flex-1 bg-zinc-100" />
                     )}
-                    <ContentPlatformMark pageUrl={focusUrl} />
+                    <ContentPlatformMark pageUrl={focusUrl} title={ogp?.title} />
                   </div>
                   <div className="flex shrink-0 flex-col justify-center px-3 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3">
                     <p className="line-clamp-2 text-center text-[11px] font-semibold leading-snug text-zinc-900 sm:text-xs md:text-sm">

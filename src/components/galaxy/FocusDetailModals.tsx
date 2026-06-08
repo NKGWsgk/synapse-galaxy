@@ -2,7 +2,8 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useState } from "react";
-import { isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
+import { resolveContentDisplayTitle } from "@/lib/ogpDisplay";
+import { fetchWorkOgpFull } from "@/lib/workOgpFull";
 import {
   contentPlatformDisplayName,
   detectContentPlatform,
@@ -25,7 +26,6 @@ import {
   ConnectionWorksLine,
   LikeButton,
   OgpTileMedia,
-  ogpMiniCache,
 } from "./FocusCompass";
 
 export type GraphDetailRequest = { url: string; nonce: number };
@@ -236,29 +236,22 @@ export const FocusDetailModals = forwardRef<FocusDetailController, Props>(functi
     setDescExpanded(false);
     setDetailImgError(false);
     setDetailOgpLoading(true);
-    const cached = ogpMiniCache.get(detailUrl);
-    if (cached?.title || cached?.imageUrl) {
-      setDetailOgp({ title: cached.title, imageUrl: cached.imageUrl, description: null, siteName: null });
-    } else {
-      setDetailOgp(null);
-    }
-    async function load(refresh: boolean) {
-      const qs = new URLSearchParams({ url: detailUrl });
-      if (refresh) qs.set("refresh", "1");
-      const r = await fetch(`/api/ogp?${qs}`, { cache: "no-store" });
-      const data = (await r.json()) as { error?: string; title?: string | null; imageUrl?: string | null; description?: string | null; siteName?: string | null };
-      if (cancelled) return;
-      if (data.error) { setDetailOgp(null); return; }
-      setDetailOgp({ title: data.title ?? null, imageUrl: data.imageUrl ?? null, description: data.description ?? null, siteName: data.siteName ?? null });
-      const label = resolveContentDisplayTitle(data.title ?? null, detailUrl);
-      if (!refresh && (isWeakContentTitleLabel(label, detailUrl) || !(data.imageUrl ?? "").trim())) {
-        await load(true);
-      }
-    }
-    void load(false).catch(() => { if (!cancelled) setDetailOgp(null); })
+    setDetailOgp(null);
+    void fetchWorkOgpFull(detailUrl, workMap, endpointWorkKey(detailUrl, workMap))
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) { setDetailOgp(null); return; }
+        setDetailOgp({
+          title: data.title,
+          imageUrl: data.imageUrl,
+          description: data.description,
+          siteName: null,
+        });
+      })
+      .catch(() => { if (!cancelled) setDetailOgp(null); })
       .finally(() => { if (!cancelled) setDetailOgpLoading(false); });
     return () => { cancelled = true; };
-  }, [detailOpen, detailUrl]);
+  }, [detailOpen, detailUrl, workMap]);
 
   useEffect(() => {
     if (!detailOpen && !keywordNote) return;

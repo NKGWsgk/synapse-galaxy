@@ -11,7 +11,9 @@ export type ContentPlatformId =
   | "youtube_music"
   | "other";
 
-export function detectContentPlatform(url: string): ContentPlatformId {
+import { isAmazonUrl, isPrimeVideoTitleText } from "@/lib/amazon";
+
+export function detectContentPlatform(url: string, title?: string | null): ContentPlatformId {
   try {
     const u = new URL(url);
     const h = u.hostname.toLowerCase();
@@ -28,6 +30,7 @@ export function detectContentPlatform(url: string): ContentPlatformId {
     if (h.includes("primevideo.com")) return "prime";
     if (h === "amzn.to" || h.endsWith(".amzn.to") || h.includes("amazon.")) {
       if (path.includes("/gp/video")) return "prime";
+      if (title && isPrimeVideoTitleText(title)) return "prime";
       return "amazon";
     }
     if (h === "video.unext.jp" || h.endsWith(".video.unext.jp")) return "unext";

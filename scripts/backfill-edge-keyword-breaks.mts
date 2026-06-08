@@ -26,7 +26,7 @@ config();
 import { createClient } from "@supabase/supabase-js";
 import synapseLimits from "../src/lib/synapseLimits.ts";
 
-const { SYNAPSE_EDGE_AI_BREAK_FROM_CHARS, SYNAPSE_EDGE_TITLE_MAX_CHARS } = synapseLimits;
+const { SYNAPSE_EDGE_TITLE_MAX_CHARS } = synapseLimits;
 
 const PAGE = 400;
 const dryRun = process.env.BACKFILL_DRY_RUN === "1";
@@ -105,10 +105,6 @@ async function main() {
       const g = [...flatKey];
       if (g.length < 2 || g.length > SYNAPSE_EDGE_TITLE_MAX_CHARS) {
         skipped++;
-        continue;
-      }
-      if (g.length < SYNAPSE_EDGE_AI_BREAK_FROM_CHARS) {
-        unchanged++;
         continue;
       }
 

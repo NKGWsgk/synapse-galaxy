@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
-import { createAnonClient } from "@/lib/supabase/clients";
-import { buildWorkEndpointMap } from "@/lib/workResolve";
+import { createAnonClient, createServiceClient } from "@/lib/supabase/clients";
+import {
+  backfillShareSlugsForEndpointUrls,
+  buildWorkEndpointMap,
+  ensureMetadataForEndpointUrls,
+} from "@/lib/workResolve";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 
 const PAGE_SIZE = 1000;
@@ -48,6 +52,18 @@ export async function GET(req: Request) {
       const row = s as { source_url?: string; target_url?: string };
       return [row.source_url, row.target_url].filter((u): u is string => typeof u === "string");
     });
+
+    // 作品タイトル・サムネは DB を正とする。不足・弱いメタは先に埋めてから workEndpoints を組み立てる。
+    try {
+      const service = createServiceClient();
+      await ensureMetadataForEndpointUrls(service, endpointUrls, 4, 40);
+      // share_slug backfill は応答をブロックしない（Gemini 呼び出しが多い）
+      void backfillShareSlugsForEndpointUrls(service, endpointUrls).catch((e) => {
+        console.error("[synapses/share_slug backfill]", e);
+      });
+    } catch (e) {
+      console.error("[synapses/metadata ensure]", e);
+    }
 
     const workEndpoints = await buildWorkEndpointMap(supabase, endpointUrls);
 

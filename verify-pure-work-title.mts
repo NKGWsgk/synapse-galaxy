@@ -61,6 +61,31 @@ const CASES: Case[] = [
     url: "https://www.amazon.co.jp/dp/B09V53MNNK",
     want: "火星の人",
   },
+  {
+    raw: "映画『ミッキー17』大ヒット上映中",
+    url: "https://www.amazon.co.jp/gp/video/detail/123",
+    want: "ミッキー17",
+  },
+  {
+    raw: "マイ・インターン(吹替版)を観る | Prime Video",
+    url: "https://www.amazon.co.jp/gp/video/detail/456",
+    want: "マイ・インターン(吹替版)",
+  },
+  {
+    raw: "ミッキー17を観る | Prime Video",
+    url: "https://www.amazon.co.jp/gp/video/detail/789",
+    want: "ミッキー17",
+  },
+  {
+    raw: "マイ・インターン(吹替版)を観る | Prime Video",
+    url: "https://www.amazon.co.jp/dp/B0GWWR79BZ",
+    want: "マイ・インターン(吹替版)",
+  },
+  {
+    raw: "映画「エレクトリック・ステイト」配信中",
+    url: "https://www.netflix.com/title/123",
+    want: "エレクトリック・ステイト",
+  },
 ];
 
 let failed = 0;

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { isAmazonUrl } from "@/lib/amazon";
+import { canonicalAmazonMediaUrl, isAmazonUrl } from "@/lib/amazon";
 import { stripSynapseAffiliate, withSynapseAffiliate } from "@/lib/synapseAffiliate";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
-import { fetchOgpResilient, needsImageRefresh, needsTitleRefresh, pureTitleForResponse } from "@/lib/ogpResolve";
+import { fetchOgpResilient, mergeOgpTitle, needsImageRefresh, needsTitleRefresh, pureTitleForResponse } from "@/lib/ogpResolve";
 import { createAnonClient, createServiceClient, type ContentMetadataRow } from "@/lib/supabase/clients";
 import { upsertContentMetadata } from "@/lib/workResolve";
 
@@ -28,6 +28,7 @@ export async function GET(req: Request) {
   }
   try {
     const normalizedUrl = normalizeSynapseEndpoint(url);
+    const pageUrl = (title: string | null) => canonicalAmazonMediaUrl(normalizedUrl, title);
 
     const supabase = createAnonClient();
     const candidates = Array.from(
@@ -53,14 +54,15 @@ export async function GET(req: Request) {
       cached?.image_url &&
       !needsImageRefresh(cached.image_url) &&
       !needsDescriptionRefresh(cached.description, normalizedUrl) &&
-      !needsTitleRefresh(cached.title, normalizedUrl)
+      !needsTitleRefresh(cached.title, pageUrl(cached.title))
     ) {
-      const pureTitle = pureTitleForResponse(cached.title, normalizedUrl);
+      const storageUrl = pageUrl(cached.title);
+      const pureTitle = pureTitleForResponse(cached.title, storageUrl);
       const storedTitle = cached.title?.trim() ?? null;
       if (pureTitle && storedTitle && pureTitle !== storedTitle) {
         try {
           const service = createServiceClient();
-          await upsertContentMetadata(service, normalizedUrl, {
+          await upsertContentMetadata(service, storageUrl, {
             title: pureTitle,
             description: cached.description,
             imageUrl: cached.image_url,
@@ -81,7 +83,7 @@ export async function GET(req: Request) {
     const og = await fetchOgpResilient(normalizedUrl);
 
     const merged = {
-      title: pureTitleForResponse(og.title ?? cached?.title ?? null, normalizedUrl),
+      title: mergeOgpTitle(og.title, cached?.title, pageUrl(og.title ?? cached?.title ?? null)),
       description:
         og.description && (!cached?.description || og.description.length > cached.description.length)
           ? og.description
@@ -92,7 +94,7 @@ export async function GET(req: Request) {
 
     try {
       const service = createServiceClient();
-      await upsertContentMetadata(service, normalizedUrl, {
+      await upsertContentMetadata(service, pageUrl(merged.title), {
         title: merged.title,
         description: merged.description,
         imageUrl: merged.imageUrl,

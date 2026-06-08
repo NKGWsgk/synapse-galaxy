@@ -70,12 +70,14 @@ const BADGE: Record<
 
 export function ContentPlatformMark({
   pageUrl,
+  title,
   className = "",
 }: {
   pageUrl: string;
+  title?: string | null;
   className?: string;
 }) {
-  const id = detectContentPlatform(pageUrl);
+  const id = detectContentPlatform(pageUrl, title);
   if (id === "other") return null;
 
   const b = BADGE[id];

@@ -40,6 +40,24 @@ function isAmazonSyntheticAsinLabel(label: string, pageUrl: string): boolean {
   return /amazon/i.test(n);
 }
 
+/** DB / workMap のタイトルが UI 表示に十分か */
+export function isAdequateWorkTitle(title: string | null | undefined, pageUrl: string): boolean {
+  const label = resolveContentDisplayTitle(title ?? null, pageUrl);
+  return !isWeakContentTitleLabel(label, pageUrl);
+}
+
+/** カード用ミニ OGP（タイトル必須。画像はあれば即表示、なくてもタイトルだけなら DB 利用可） */
+export function isAdequateWorkOgpMini(
+  title: string | null | undefined,
+  imageUrl: string | null | undefined,
+  pageUrl: string,
+  opts?: { requireImage?: boolean },
+): boolean {
+  if (!isAdequateWorkTitle(title, pageUrl)) return false;
+  if (opts?.requireImage && !(imageUrl ?? "").trim()) return false;
+  return true;
+}
+
 /** フォーカス名・接続名として使えない短いラベル（ドメイン名フォールバック等） */
 export function isWeakContentTitleLabel(label: string, pageUrl: string): boolean {
   if (isAmazonSyntheticAsinLabel(label, pageUrl)) return true;

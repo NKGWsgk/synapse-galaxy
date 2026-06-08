@@ -11,8 +11,14 @@ export const SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE = 15;
 export const SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE = 18;
 
 /**
- * この文字数（Unicode グリフ）**以上**の接続題だけ、改行 AI を呼び、原則 2 行（改行1箇所）にする。
- * 未満はピルも短いので API も改行指示も付けない。
+ * 句読点などで2行に分けるとき、各行の最低字数（Unicode グリフ）。
+ * 全体が15文字以内でも「、」の直後など自然な切れ目があれば改行してよい。
+ */
+export const SYNAPSE_EDGE_LABEL_MIN_CHARS_PER_LINE = 5;
+
+/**
+ * この文字数（Unicode グリフ）**以上**の接続題だけ、改行 AI を呼ぶ（句読点での決定論的分割を試したあと）。
+ * 未満かつ句読点分割も無いときは1行のまま。
  */
 export const SYNAPSE_EDGE_AI_BREAK_FROM_CHARS = 10;
 

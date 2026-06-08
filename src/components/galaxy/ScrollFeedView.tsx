@@ -2,20 +2,16 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SynapseRow } from "@/lib/supabase/clients";
-import { getOgpImageDisplaySrc, isWeakContentTitleLabel, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
+import { getOgpImageDisplaySrc, resolveContentDisplayTitle } from "@/lib/ogpDisplay";
 import { isVideoStyleOgpPageUrl } from "@/lib/ogpImagePresentation";
 import { buildFocusConnectionSets, type FocusConnectionSet } from "@/lib/focusConnections";
-import type { WorkEndpointMap } from "@/lib/workEndpoint";
+import { endpointWorkKey, type WorkEndpointMap } from "@/lib/workEndpoint";
 import { fetchWorkOgpFull } from "@/lib/workOgpFull";
+import { useWorkOgpMini } from "@/hooks/useWorkOgpMini";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import { WorkPlatformLink } from "@/components/galaxy/WorkPlatformLink";
 import { ContentPlatformMark } from "@/components/galaxy/ContentPlatformMark";
-import {
-  fetchOgpMiniPayload,
-  LikeButton,
-  OgpTileMedia,
-  ogpMiniCache,
-} from "@/components/galaxy/FocusCompass";
+import { LikeButton, OgpTileMedia } from "@/components/galaxy/FocusCompass";
 import {
   FocusDetailModals,
   type FocusDetailController,
@@ -34,8 +30,6 @@ type Props = {
   onSynapseShareRequestHandled?: () => void;
   onSynapseShareChange?: (id: string | null) => void;
 };
-
-type OgpMini = { title: string | null; imageUrl: string | null };
 
 function flatKeyword(raw: string): string {
   return raw.normalize("NFC").replace(/\r/g, "").replace(/\n/g, "").replace(/\u200b/g, "");
@@ -72,41 +66,6 @@ function useAccessToken(): string | null {
     return () => subscription.unsubscribe();
   }, []);
   return accessToken;
-}
-
-function useWorkOgp(url: string): { data: OgpMini | null; loading: boolean; imgError: boolean; setImgError: (v: boolean) => void } {
-  const [data, setData] = useState<OgpMini | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [imgError, setImgError] = useState(false);
-
-  useEffect(() => {
-    let cancel = false;
-    const hit = ogpMiniCache.get(url);
-    if (hit) {
-      // 画像があればタイトルが弱くても表示する（Amazon 等）
-      if ((hit.imageUrl ?? "").trim()) {
-        setData(hit);
-        setLoading(false);
-        return;
-      }
-      const label = resolveContentDisplayTitle(hit.title, url);
-      if (!isWeakContentTitleLabel(label, url)) {
-        setData(hit);
-        setLoading(false);
-        return;
-      }
-      ogpMiniCache.delete(url);
-    }
-    setLoading(true);
-    setImgError(false);
-    void fetchOgpMiniPayload(url)
-      .then((o) => { if (!cancel) setData(o ?? { title: null, imageUrl: null }); })
-      .catch(() => { if (!cancel) setData({ title: null, imageUrl: null }); })
-      .finally(() => { if (!cancel) setLoading(false); });
-    return () => { cancel = true; };
-  }, [url]);
-
-  return { data, loading, imgError, setImgError };
 }
 
 /**
@@ -170,8 +129,9 @@ function useActiveConnectionIndex(
   return index;
 }
 
-function FocusHeroImage({ url }: { url: string }) {
-  const { data, loading, imgError, setImgError } = useWorkOgp(url);
+function FocusHeroImage({ url, workMap }: { url: string; workMap: WorkEndpointMap }) {
+  const workKey = endpointWorkKey(url, workMap);
+  const { data, loading, imgError, setImgError } = useWorkOgpMini(url, workMap, workKey);
   const displayTitle = resolveContentDisplayTitle(data?.title ?? null, url);
   const showImage = !!data?.imageUrl && !imgError;
 
@@ -198,20 +158,23 @@ function FocusHeroImage({ url }: { url: string }) {
 
 function FocusWorkIntroPanel({
   url,
+  workMap,
   expanded,
   onToggle,
 }: {
   url: string;
+  workMap: WorkEndpointMap;
   expanded: boolean;
   onToggle: () => void;
 }) {
   const [ogp, setOgp] = useState<{ description: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
+  const workKey = endpointWorkKey(url, workMap);
 
   useEffect(() => {
     let cancel = false;
     setLoading(true);
-    void fetchWorkOgpFull(url)
+    void fetchWorkOgpFull(url, workMap, workKey)
       .then((data) => {
         if (cancel) return;
         setOgp(data ? { description: data.description } : null);
@@ -219,7 +182,7 @@ function FocusWorkIntroPanel({
       .catch(() => { if (!cancel) setOgp(null); })
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
-  }, [url]);
+  }, [url, workMap, workKey]);
 
   const description = ogp?.description?.trim() ?? "";
   const hasDescription = loading || description.length > 0;
@@ -273,17 +236,19 @@ function FocusWorkIntroPanel({
 
 function FocusFocusBlock({
   url,
+  workMap,
   expanded,
   onToggle,
 }: {
   url: string;
+  workMap: WorkEndpointMap;
   expanded: boolean;
   onToggle: () => void;
 }) {
   return (
     <div className="shrink-0 overflow-hidden rounded-xl border border-indigo-200/70 bg-white shadow-sm ring-1 ring-indigo-100/80">
-      <FocusHeroImage url={url} />
-      <FocusWorkIntroPanel url={url} expanded={expanded} onToggle={onToggle} />
+      <FocusHeroImage url={url} workMap={workMap} />
+      <FocusWorkIntroPanel url={url} workMap={workMap} expanded={expanded} onToggle={onToggle} />
     </div>
   );
 }
@@ -387,18 +352,20 @@ function ConnectionDots({
 
 function FeedUniformThumb({
   url,
+  title,
   loading,
   imageUrl,
   imgError,
   onError,
 }: {
   url: string;
+  title?: string | null;
   loading: boolean;
   imageUrl: string | null | undefined;
   imgError: boolean;
   onError: () => void;
 }) {
-  const isVideo = isVideoStyleOgpPageUrl(url);
+  const isVideo = isVideoStyleOgpPageUrl(url, title);
   const showImage = !!imageUrl && !imgError;
   const src = showImage ? getOgpImageDisplaySrc(imageUrl!, url) : "";
 
@@ -429,26 +396,29 @@ function FeedUniformThumb({
           />
         )
       ) : null}
-      <ContentPlatformMark pageUrl={url} />
+      <ContentPlatformMark pageUrl={url} title={title} />
     </div>
   );
 }
 
 function ConnectionSetCard({
   set,
+  workMap,
   cardRef,
   accessToken,
   onPickWork,
   onKeywordNote,
 }: {
   set: FocusConnectionSet;
+  workMap: WorkEndpointMap;
   cardRef: (el: HTMLElement | null) => void;
   accessToken: string | null;
   onPickWork: (url: string) => void;
   onKeywordNote: (set: FocusConnectionSet) => void;
 }) {
   const { synapse, keyword, neighborUrl, isOutgoing } = set;
-  const { data, loading, imgError, setImgError } = useWorkOgp(neighborUrl);
+  const workKey = endpointWorkKey(neighborUrl, workMap);
+  const { data, loading, imgError, setImgError } = useWorkOgpMini(neighborUrl, workMap, workKey);
   const displayTitle = resolveContentDisplayTitle(data?.title ?? null, neighborUrl);
   const description = synapse.description?.trim() ?? "";
   const [descOpen, setDescOpen] = useState(false);
@@ -552,6 +522,7 @@ function ConnectionSetCard({
         >
           <FeedUniformThumb
             url={neighborUrl}
+            title={data?.title}
             loading={loading}
             imageUrl={data?.imageUrl}
             imgError={imgError}
@@ -663,6 +634,7 @@ export function ScrollFeedView({
         >
           <FocusFocusBlock
             url={focusUrl}
+            workMap={workMap}
             expanded={introOpen}
             onToggle={() => setIntroOpen((v) => !v)}
           />
@@ -683,6 +655,7 @@ export function ScrollFeedView({
               <ConnectionSetCard
                 key={set.id}
                 set={set}
+                workMap={workMap}
                 cardRef={setCardRef(index)}
                 accessToken={accessToken}
                 onPickWork={handlePickWork}

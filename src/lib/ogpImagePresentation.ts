@@ -1,8 +1,10 @@
+import { isAmazonUrl, isPrimeVideoTitleText } from "@/lib/amazon";
+
 /**
  * コンパス・OGP プレビュー用。動画サムネは横長なので本とは別レイアウトにする。
  */
 
-export function isVideoStyleOgpPageUrl(url: string): boolean {
+export function isVideoStyleOgpPageUrl(url: string, title?: string | null): boolean {
   try {
     const h = new URL(url).hostname.toLowerCase();
     if (h === "youtu.be" || h.includes("youtube.com")) return true;
@@ -12,6 +14,7 @@ export function isVideoStyleOgpPageUrl(url: string): boolean {
     if (h === "video.unext.jp" || h.endsWith(".video.unext.jp")) return true;
     if (h.includes("primevideo.com")) return true;
     if (h.includes("amazon.") && url.includes("/gp/video")) return true;
+    if (title && isAmazonUrl(url) && isPrimeVideoTitleText(title)) return true;
     return false;
   } catch {
     return false;
@@ -33,8 +36,12 @@ type VideoClasses = {
   img: string;
 };
 
-export function ogpImageLayout(pageUrl: string, slot: OgpImageSlot): PortraitClasses | VideoClasses {
-  if (!isVideoStyleOgpPageUrl(pageUrl)) {
+export function ogpImageLayout(
+  pageUrl: string,
+  slot: OgpImageSlot,
+  title?: string | null,
+): PortraitClasses | VideoClasses {
+  if (!isVideoStyleOgpPageUrl(pageUrl, title)) {
     const outerBySlot: Record<OgpImageSlot, string> = {
       gridMini: "relative min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-zinc-100",
       gridHero: "relative min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-zinc-100",
