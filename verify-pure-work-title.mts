@@ -86,6 +86,21 @@ const CASES: Case[] = [
     url: "https://www.netflix.com/title/123",
     want: "エレクトリック・ステイト",
   },
+  {
+    raw: "リトル・フォレスト(1) (ワイドKCアフタヌーン)",
+    url: "https://www.amazon.co.jp/dp/406337551X",
+    want: "リトル・フォレスト",
+  },
+  {
+    raw: "Amazon.co.jp: リトル・フォレスト(1) (ワイドKCアフタヌーン) : 五十嵐 大介: 本",
+    url: "https://www.amazon.co.jp/dp/406337551X",
+    want: "リトル・フォレスト",
+  },
+  {
+    raw: "昨夜のカレー、明日のパン (河出文庫 き 7-7)",
+    url: "https://www.amazon.co.jp/dp/4309414265",
+    want: "昨夜のカレー、明日のパン",
+  },
 ];
 
 let failed = 0;

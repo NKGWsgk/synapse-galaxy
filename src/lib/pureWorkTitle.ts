@@ -100,9 +100,17 @@ const OUTER_WRAP_RE = /^[\s「『〈《]+|[\s」』〉》]+$/gu;
 const VOLUME_SUFFIX_RE =
   /\s*(?:[（(【]\s*)?(?:第\s*[0-9０-９一二三四五六七八九十百千]+\s*)?[上下](?:巻|册|冊)?(?:\s*[）)】])?\s*$/u;
 
+/** コミック等の巻数 `(1)` `（第3巻）` — 作品名末尾の巻次表記 */
+const NUMERIC_VOLUME_PAREN_RE =
+  /[（(]\s*(?:第\s*)?[0-9０-９一二三四五六七八九十百千]+\s*(?:巻|册|冊)?\s*[）)]/gu;
+
 /** 「上 (ハヤカワ文庫SF)」のように巻＋括弧レーベルが続くブロック */
 const VOLUME_PAREN_BLOCK_RE =
   /\s*(?:第\s*[0-9０-９一二三四五六七八九十百千]+\s*)?[上下](?:巻|册|冊)?\s*[（(][^）)]*[）)]/gu;
+
+/** 括弧内のコミック誌・KC レーベル（文庫/新書以外） */
+const PAREN_COMIC_LABEL_RE =
+  /[（(][^）)]*(?:KC|コミックス|COMIC|アフタヌーン|ジャンプ|マガジン|サンデー|イブニング|モーニング|フラワー|リボン|なかよし|BE\s*LOVE|ヤング|ガンガン|少年|少女|青年)[^）)]*[）)]/gi;
 
 const LEADING_BRACKETED_IMPRINT_RE = /^【[^】]+】\s*/u;
 
@@ -122,6 +130,14 @@ function stripPublisherImprints(t: string): string {
     .replace(PAREN_IMPRINT_RE, " ")
     .replace(PUBLISHER_IMPRINT_RE, " ");
   return normalizeWhitespace(s);
+}
+
+function stripNumericVolumeMarkers(t: string): string {
+  return normalizeWhitespace(t.replace(NUMERIC_VOLUME_PAREN_RE, " "));
+}
+
+function stripComicLabelParenBlocks(t: string): string {
+  return normalizeWhitespace(t.replace(PAREN_COMIC_LABEL_RE, " "));
 }
 
 function stripVolumeParenBlocks(t: string): string {
@@ -297,9 +313,13 @@ export function extractPureWorkTitle(title: string | null | undefined, pageUrl: 
     t = stripStreamingPipeSegments(t, pageUrl);
   }
 
+  t = stripNumericVolumeMarkers(t);
+  t = stripComicLabelParenBlocks(t);
   t = stripVolumeParenBlocks(t);
   t = stripPublisherImprints(t);
   t = stripGlobalSuffixes(t);
+  t = stripNumericVolumeMarkers(t);
+  t = stripComicLabelParenBlocks(t);
   t = stripPublisherImprints(t);
   t = stripVolumeParenBlocks(t);
   t = stripOuterWrappers(t);

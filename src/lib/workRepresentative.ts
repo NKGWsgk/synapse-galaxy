@@ -1,4 +1,5 @@
 import { detectContentPlatform, isAllowedSynapseUrl } from "@/lib/contentPlatform";
+import { isAdequateWorkDescription } from "@/lib/ogpDisplay";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 
 /** 同一 canonical 内で代表 URL / サムネを選ぶときのプラットフォーム優先度 */
@@ -19,6 +20,7 @@ const PLATFORM_PRIORITY: Record<string, number> = {
 export type RepresentativeCandidate = {
   url: string;
   title: string | null;
+  description?: string | null;
   image_url: string | null;
   updated_at: string;
 };
@@ -54,4 +56,13 @@ export function pickBestImageUrl(rows: RepresentativeCandidate[]): string | null
   const withImage = rows.filter((r) => r.image_url?.trim());
   if (withImage.length === 0) return null;
   return pickRepresentativeRow(withImage, null).image_url?.trim() ?? null;
+}
+
+/** 同一作品の sibling URL から最良の概要文を選ぶ */
+export function pickBestDescription(rows: RepresentativeCandidate[], pageUrl: string): string | null {
+  const candidates = rows
+    .map((r) => ({ url: r.url, desc: r.description?.trim() ?? "" }))
+    .filter((x) => isAdequateWorkDescription(x.desc, x.url || pageUrl));
+  if (candidates.length === 0) return null;
+  return candidates.sort((a, b) => b.desc.length - a.desc.length)[0]!.desc;
 }

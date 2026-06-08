@@ -100,6 +100,22 @@ export function isWeakContentTitleLabel(label: string, pageUrl: string): boolean
   return false;
 }
 
+/** 作品概要として UI に十分か（短い Amazon メタだけ等は不十分） */
+export function isAdequateWorkDescription(
+  description: string | null | undefined,
+  pageUrl: string,
+): boolean {
+  const d = description?.trim() ?? "";
+  if (!d) return false;
+  if (/^amazon\.co\.jp\s*[:：]/i.test(d)) return false;
+  try {
+    if (isAmazonUrl(pageUrl) && d.length < 160) return false;
+  } catch {
+    // ignore
+  }
+  return true;
+}
+
 /**
  * OGP タイトルと URL から UI 用の一行ラベルを決定（Amazon は ASIN までフォールバック）。
  */

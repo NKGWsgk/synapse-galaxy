@@ -9,7 +9,7 @@ import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { computeWorkFingerprint } from "@/lib/workIdentity";
 import { resolveShareSlug } from "@/lib/shareSlugResolve";
 import { isLikelyKatakanaRomajiSlug } from "@/lib/workShareSlug";
-import { pickBestImageUrl, pickRepresentativeRow } from "@/lib/workRepresentative";
+import { pickBestDescription, pickBestImageUrl, pickRepresentativeRow } from "@/lib/workRepresentative";
 
 export type ContentMetadataLite = {
   url: string;
@@ -28,6 +28,7 @@ export type WorkEndpointInfo = {
   workId: string;
   representativeUrl: string;
   title: string | null;
+  description: string | null;
   shareSlug: string | null;
   imageUrl: string | null;
   siteName: string | null;
@@ -515,10 +516,12 @@ export async function buildWorkEndpointMap(
     const imageUrl = pickBestImageUrl(siblings) ?? rep.image_url;
     const displayTitle =
       extractPureWorkTitle(rep.title, rep.url) ?? extractPureWorkTitle(hit.title, hit.url) ?? rep.title;
+    const description = pickBestDescription(siblings, rep.url) ?? rep.description ?? hit.description ?? null;
     out[norm] = {
       workId: hit.canonical_id,
       representativeUrl: rep.url,
       title: displayTitle,
+      description,
       shareSlug: rep.share_slug?.trim() || null,
       imageUrl,
       siteName: rep.site_name,
