@@ -402,11 +402,11 @@ export function Header({
           Open Campaign
         </span>
         <span className="mt-1 flex items-center justify-between gap-2 text-xs font-semibold text-zinc-900">
-          <span>「いいね！」アワード開催中</span>
+          <span>「いいね！」アワード 11/11〜</span>
           <span className="text-amber-500 transition group-hover:translate-x-0.5" aria-hidden>→</span>
         </span>
         <span className="mt-1 block text-[11px] leading-relaxed text-zinc-500">
-          上位レビューにAmazonギフトカード
+          上位3名にAmazonギフトカード3,000円
         </span>
       </Link>
 
