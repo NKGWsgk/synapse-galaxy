@@ -1678,9 +1678,11 @@ export function GraphView({
       .alphaDecay(0.012)
       .velocityDecay(0.4);
 
-    // 3) Pre-settle more ticks (~700) so stronger forces have time to settle.
+    // 3) Pre-settle ~200 ticks for angular arrangement. The snap post-process
+    //    reassigns all radii anyway; only angles matter here, and they stabilize
+    //    well before 700 ticks. Keeping this low avoids blocking the main thread.
     sim.stop();
-    for (let i = 0; i < 700; i++) sim.tick();
+    for (let i = 0; i < 200; i++) sim.tick();
 
     // 4) SNAP POST-PROCESS — cluster-aware slot assignment per ring.
     const RADIUS_STEP = LINK_DISTANCE;
