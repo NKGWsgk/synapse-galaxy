@@ -364,19 +364,8 @@ function zoomByDisplayPercentStep(
 
 // ── Color & dominant-dim ─────────────────────────────────────────────────────
 
-const DIM_STROKE: Record<DominantDim, string> = {
-  rika:     "rgba(59,130,246,0.72)",
-  bunkei:   "rgba(234,179,8,0.78)",
-  art:      "rgba(244,63,94,0.72)",
-  balanced: "rgba(99,102,241,0.55)",
-};
-
-const DIM_MARKER: Record<DominantDim, string> = {
-  rika:     "#3b82f6",
-  bunkei:   "#eab308",
-  art:      "#f43f5e",
-  balanced: "#6366f1",
-};
+const SYNAPSE_LINE_STROKE = "rgba(82,82,91,0.56)";
+const SYNAPSE_ARROW_FILL = "rgba(82,82,91,0.78)";
 
 // ── Graph construction ───────────────────────────────────────────────────────
 
@@ -2707,7 +2696,6 @@ export function GraphView({
         placedLabels.push({ x: labelX, y: labelY, hw: labelHw, hh: labelHh });
       }
 
-      const stroke = DIM_STROKE[l.dominant];
       const synCount = l.synapses.length;
       const lineWidth = Math.min(5, 1.6 + Math.log2(synCount) * 1.4);
       const pillMeasure = l.keyword ? measureEdgeKeywordPill(l.keyword) : null;
@@ -2728,7 +2716,7 @@ export function GraphView({
                 y1={srcEdge.y}
                 x2={srcEdge.x + ux * gapStart}
                 y2={srcEdge.y + uy * gapStart}
-                stroke={stroke}
+                stroke={SYNAPSE_LINE_STROKE}
                 strokeWidth={lineWidth}
                 strokeLinecap="butt"
               />
@@ -2737,7 +2725,7 @@ export function GraphView({
                 y1={srcEdge.y + uy * gapEnd}
                 x2={lineEndX}
                 y2={lineEndY}
-                stroke={stroke}
+                stroke={SYNAPSE_LINE_STROKE}
                 strokeWidth={lineWidth}
                 strokeLinecap="butt"
               />
@@ -2745,12 +2733,12 @@ export function GraphView({
           );
         } else {
           lineBody = (
-            <line x1={srcEdge.x} y1={srcEdge.y} x2={lineEndX} y2={lineEndY} stroke={stroke} strokeWidth={lineWidth} strokeLinecap="butt" />
+            <line x1={srcEdge.x} y1={srcEdge.y} x2={lineEndX} y2={lineEndY} stroke={SYNAPSE_LINE_STROKE} strokeWidth={lineWidth} strokeLinecap="butt" />
           );
         }
       } else {
         lineBody = (
-          <line x1={srcEdge.x} y1={srcEdge.y} x2={lineEndX} y2={lineEndY} stroke={stroke} strokeWidth={lineWidth} strokeLinecap="butt" />
+          <line x1={srcEdge.x} y1={srcEdge.y} x2={lineEndX} y2={lineEndY} stroke={SYNAPSE_LINE_STROKE} strokeWidth={lineWidth} strokeLinecap="butt" />
         );
       }
       edgeLineElements.push(
@@ -2818,7 +2806,7 @@ export function GraphView({
             style={{ position: "absolute", left: -2000, top: -2000, overflow: "visible" }}
           >
             <defs>
-              {(Object.keys(DIM_MARKER) as DominantDim[]).map((d) => (
+              {(["rika", "bunkei", "art", "balanced"] satisfies DominantDim[]).map((d) => (
                 <marker
                   key={d}
                   id={`arrow-${d}`}
@@ -2829,7 +2817,7 @@ export function GraphView({
                   orient="auto"
                   markerUnits="userSpaceOnUse"
                 >
-                  <path d="M0,0 L10,4 L0,8 Z" fill={DIM_MARKER[d]} />
+                  <path d="M0,0 L10,4 L0,8 Z" fill={SYNAPSE_ARROW_FILL} />
                 </marker>
               ))}
             </defs>

@@ -8,9 +8,22 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
+  let displayName = id.slice(0, 8);
+  try {
+    const supabase = createServiceClient();
+    const { data } = await supabase.auth.admin.getUserById(id);
+    if (data?.user) {
+      const meta = data.user.user_metadata;
+      displayName =
+        (meta?.nickname as string | undefined) ??
+        (meta?.full_name as string | undefined) ??
+        data.user.email?.split("@")[0] ??
+        displayName;
+    }
+  } catch { /* noop */ }
   return {
-    title: `ユーザー ${id.slice(0, 8)}…`,
-    description: `${SITE_NAME_JA}（${SITE_NAME_EN}）のユーザープロフィール。投稿したシナプス（コンテンツ間の接続）と受け取ったいいね数を確認できます。`,
+    title: `${displayName}のシナプス`,
+    description: `${SITE_NAME_JA}（${SITE_NAME_EN}）の${displayName}さんのプロフィール。投稿したシナプス（コンテンツ間の接続）と受け取ったいいね数を確認できます。`,
   };
 }
 

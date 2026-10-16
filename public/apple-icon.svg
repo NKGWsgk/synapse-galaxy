@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="SYNAPSE Galaxy">
+  <rect width="512" height="512" rx="112" fill="#312e81"/>
+  <circle cx="256" cy="256" r="136" fill="none" stroke="#a5b4fc" stroke-width="28"/>
+  <circle cx="256" cy="256" r="46" fill="#f8fafc"/>
+  <circle cx="152" cy="180" r="34" fill="#f472b6"/>
+  <circle cx="360" cy="180" r="34" fill="#22d3ee"/>
+  <circle cx="152" cy="332" r="34" fill="#facc15"/>
+  <circle cx="360" cy="332" r="34" fill="#34d399"/>
+  <path d="M178 194 230 240M334 194 282 240M178 318 230 272M334 318 282 272" stroke="#f8fafc" stroke-width="22" stroke-linecap="round"/>
+</svg>

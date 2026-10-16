@@ -3,9 +3,11 @@ import type { Metadata } from "next";
 export const SITE_NAME_JA = "シナプスギャラクシー";
 export const SITE_NAME_EN = "SYNAPSE Galaxy";
 export const SITE_TAGLINE = "コンテンツを「なぜ繋がるか」で結ぶシナプス型ネットワーク";
+export const SITE_BRAND_NAME = `${SITE_NAME_EN}（${SITE_NAME_JA}）`;
 
 /** 検索・schema.org 用の別名（ブランド表記は SITE_NAME_EN を正とする） */
 export const SITE_ALTERNATE_NAMES = [
+  SITE_BRAND_NAME,
   SITE_NAME_JA,
   "シナプス ギャラクシー",
   "synapse galaxy",
@@ -13,7 +15,7 @@ export const SITE_ALTERNATE_NAMES = [
 ] as const;
 
 export const SITE_DESCRIPTION =
-  "SYNAPSE Galaxy（シナプスギャラクシー）は、書籍・動画・Web記事などのコンテンツを「なぜ繋がるか」という自由記述で結ぶシナプス型SNSです。4×4コンパスで接続を探索し、AIが抽出するキーワードと8属性（理・文・芸・時ほか）で知的好奇心を可視化します。";
+  "SYNAPSE Galaxy（シナプスギャラクシー）は、メディア、プラットフォームを超えた、作品と作品を繋ぐレビューサイトです。";
 
 /** SNS シェア用 OGP 画像（public/ 配下） */
 export const SITE_OGP_IMAGE = {
@@ -69,7 +71,6 @@ export function getSiteUrl(): URL {
 
 export function buildSiteMetadata(overrides?: Metadata): Metadata {
   const defaultTitle = `${SITE_NAME_EN} | ${SITE_NAME_JA}`;
-  const combinedName = `${SITE_NAME_EN}（${SITE_NAME_JA}）`;
 
   return {
     metadataBase: getSiteUrl(),
@@ -79,13 +80,25 @@ export function buildSiteMetadata(overrides?: Metadata): Metadata {
     },
     description: SITE_DESCRIPTION,
     keywords: [...SITE_KEYWORDS],
-    applicationName: combinedName,
+    applicationName: SITE_BRAND_NAME,
+    creator: SITE_NAME_EN,
+    publisher: SITE_NAME_EN,
     category: "social network",
+    icons: {
+      icon: [
+        { url: "/icon.svg", type: "image/svg+xml" },
+        { url: "/favicon.svg", type: "image/svg+xml" },
+      ],
+      apple: [{ url: "/apple-icon.svg", type: "image/svg+xml" }],
+    },
+    appleWebApp: {
+      title: SITE_NAME_EN,
+    },
     openGraph: {
       type: "website",
       locale: "ja_JP",
       url: "/",
-      siteName: combinedName,
+      siteName: SITE_BRAND_NAME,
       title: defaultTitle,
       description: SITE_DESCRIPTION,
       images: [
@@ -110,6 +123,9 @@ export function buildSiteMetadata(overrides?: Metadata): Metadata {
       index: true,
       follow: true,
     },
+    other: {
+      "apple-mobile-web-app-title": SITE_NAME_EN,
+    },
     ...overrides,
   };
 }
@@ -119,10 +135,15 @@ export function buildWebsiteJsonLd(): Record<string, unknown> {
   return {
     "@context": "https://schema.org",
     "@type": "WebSite",
+    "@id": `${siteUrl.origin}/#website`,
     name: SITE_NAME_EN,
     alternateName: [...SITE_ALTERNATE_NAMES],
     url: siteUrl.origin,
     description: SITE_DESCRIPTION,
     inLanguage: "ja",
+    publisher: {
+      "@type": "Organization",
+      name: SITE_NAME_EN,
+    },
   };
 }

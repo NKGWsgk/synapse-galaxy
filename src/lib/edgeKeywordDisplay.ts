@@ -45,25 +45,105 @@ export function sanitizeEdgeKeywordBreakOutput(original: string, formatted: unkn
   return `${head}\n${tail}`;
 }
 
-const EDGE_KEYWORD_BREAK_AFTER = new Set(["、", "。", "，", ",", "."]);
+const EDGE_KEYWORD_BREAK_AFTER = new Set(["、", "。", "，", ",", ".", "：", ":", "；", ";"]);
+
+const EDGE_KEYWORD_BREAK_AFTER_PHRASES = [
+  "に対して",
+  "について",
+  "によって",
+  "としての",
+  "からの",
+  "ために",
+  "という",
+  "ような",
+  "として",
+  "から",
+  "まで",
+  "より",
+  "への",
+  "には",
+  "では",
+  "でも",
+  "とは",
+  "にも",
+  "ため",
+  "と",
+  "や",
+  "が",
+  "は",
+  "を",
+  "に",
+  "で",
+  "の",
+].sort((a, b) => [...b].length - [...a].length);
+
+function isKatakanaLike(ch: string): boolean {
+  return /^[ァ-ヴー]$/u.test(ch);
+}
+
+function isAsciiWord(ch: string): boolean {
+  return /^[A-Za-z0-9]$/u.test(ch);
+}
+
+function isHiragana(ch: string): boolean {
+  return /^[ぁ-ん]$/u.test(ch);
+}
+
+function isSmallKanaOrMark(ch: string): boolean {
+  return /^[ゃゅょっャュョッー゛゜]$/u.test(ch);
+}
+
+function isProtectedRunBreak(prev: string | undefined, next: string | undefined): boolean {
+  if (!prev || !next) return true;
+  if (isSmallKanaOrMark(next)) return true;
+  if (isKatakanaLike(prev) && isKatakanaLike(next)) return true;
+  if (isAsciiWord(prev) && isAsciiWord(next)) return true;
+  if (isHiragana(prev) && isHiragana(next)) return true;
+  return false;
+}
+
+function breakRank(head: string, tail: string, hintedPositions: Set<number>): number | null {
+  const last = [...head].at(-1);
+  if (last && EDGE_KEYWORD_BREAK_AFTER.has(last)) return 0;
+  if (EDGE_KEYWORD_BREAK_AFTER_PHRASES.some((phrase) => head.endsWith(phrase))) return 1;
+  if (/^[「『（(【\[]/u.test(tail)) return 2;
+  if (hintedPositions.has([...head].length)) return 3;
+  return null;
+}
+
+function zwspBreakPositions(raw: string): Set<number> {
+  const hinted = jaKeywordSoftBreakHints(raw);
+  const positions = new Set<number>();
+  let n = 0;
+  for (const ch of [...hinted]) {
+    if (ch === "\u200b") {
+      positions.add(n);
+    } else {
+      n++;
+    }
+  }
+  return positions;
+}
 
 /**
- * 句読点の直後で2行に分ける（AI 失敗時・表示フォールバック・保存前の決定論的改行）。
- * 全体が15文字以内でも切れ目があれば分割可。各行は MIN〜MAX グリフ、助詞1字行は不可。
+ * 日本語として自然な位置で最大2行に分ける（AI 失敗時・表示フォールバック・保存前の決定論的改行）。
+ * 10文字以上は、句読点・助詞/接続表現・soft break hint の順に候補を探す。
  */
 export function findEdgeKeywordTwoLineSplit(flat: string): readonly [string, string] | null {
   const t = flat.normalize("NFC").replace(/\u200b/g, "");
+  const all = [...t];
+  if (all.length < 10) return null;
   const minPerLine = SYNAPSE_EDGE_LABEL_MIN_CHARS_PER_LINE;
+  const maxPerLine = SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE;
+  const targetPerLine = SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE;
+  const hintedPositions = zwspBreakPositions(t);
 
-  type Cand = { head: string; tail: string; punctRank: number; imbalance: number };
+  type Cand = { head: string; tail: string; score: number };
   let best: Cand | null = null;
 
-  for (let i = 1; i < t.length; i++) {
-    const punct = t[i - 1]!;
-    if (!EDGE_KEYWORD_BREAK_AFTER.has(punct)) continue;
-
-    const head = t.slice(0, i);
-    const tail = t.slice(i);
+  for (let i = 1; i < all.length; i++) {
+    const head = all.slice(0, i).join("");
+    const tail = all.slice(i).join("");
     if (!head || !tail || `${head}${tail}` !== t) continue;
     if (isLoneAssistParticleSegment(head) || isLoneAssistParticleSegment(tail)) continue;
 
@@ -72,25 +152,50 @@ export function findEdgeKeywordTwoLineSplit(flat: string): readonly [string, str
     if (
       headG.length < minPerLine ||
       tailG.length < minPerLine ||
-      headG.length > SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE ||
-      tailG.length > SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE
+      headG.length > maxPerLine ||
+      tailG.length > maxPerLine ||
+      isProtectedRunBreak(all[i - 1], all[i])
     ) {
       continue;
     }
 
-    const punctRank = punct === "、" ? 0 : punct === "。" ? 1 : punct === "，" ? 2 : punct === "," ? 3 : 4;
+    const rank = breakRank(head, tail, hintedPositions);
+    if (rank == null) continue;
     const imbalance = Math.abs(headG.length - tailG.length);
-    const cand: Cand = { head, tail, punctRank, imbalance };
-    if (
-      !best ||
-      cand.punctRank < best.punctRank ||
-      (cand.punctRank === best.punctRank && cand.imbalance < best.imbalance)
-    ) {
-      best = cand;
+    const longest = Math.max(headG.length, tailG.length);
+    const overTarget = Math.max(0, longest - targetPerLine);
+    const score = rank * 1000 + overTarget * 60 + imbalance * 8 + Math.abs(i - all.length / 2);
+    const cand: Cand = { head, tail, score };
+    if (!best || cand.score < best.score) best = cand;
+  }
+
+  if (best) return [best.head, best.tail];
+
+  if (all.length > maxPerLine) {
+    const midpoint = Math.ceil(all.length / 2);
+    for (let distance = 0; distance <= all.length; distance++) {
+      for (const i of [midpoint - distance, midpoint + distance]) {
+        if (i <= 0 || i >= all.length) continue;
+        const head = all.slice(0, i).join("");
+        const tail = all.slice(i).join("");
+        const headG = [...head];
+        const tailG = [...tail];
+        if (
+          headG.length >= minPerLine &&
+          tailG.length >= minPerLine &&
+          headG.length <= maxPerLine &&
+          tailG.length <= maxPerLine &&
+          !isProtectedRunBreak(all[i - 1], all[i]) &&
+          !isLoneAssistParticleSegment(head) &&
+          !isLoneAssistParticleSegment(tail)
+        ) {
+          return [head, tail];
+        }
+      }
     }
   }
 
-  return best ? [best.head, best.tail] : null;
+  return null;
 }
 
 /**
@@ -127,7 +232,7 @@ function splitEdgeLabelForPillDisplay(flat: string): string[] {
   if (g.length <= SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE) {
     return [jaKeywordSoftBreakHints(t)];
   }
-  const n = SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE;
+  const n = Math.ceil(g.length / 2);
   return [g.slice(0, n).join(""), g.slice(n).join("")];
 }
 

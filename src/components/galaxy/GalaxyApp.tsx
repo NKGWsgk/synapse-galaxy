@@ -60,8 +60,9 @@ function saveViewCount(n: number) {
 function loadMobileViewMode(): ViewMode {
   try {
     const v = localStorage.getItem(MOBILE_VIEW_KEY);
-    return v === "feed" ? "feed" : "map";
-  } catch { return "map"; }
+    if (v === "feed" || v === "map") return v;
+    return "feed"; // モバイルは feed をデフォルトにしてチラつきを低減
+  } catch { return "feed"; }
 }
 function saveMobileViewMode(mode: ViewMode) {
   try { localStorage.setItem(MOBILE_VIEW_KEY, mode); } catch { /* noop */ }
@@ -194,7 +195,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   const [userPostCount, setUserPostCount] = useState(0);
   const [gateOpen, setGateOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [mobileViewMode, setMobileViewMode] = useState<ViewMode>("map");
+  const [mobileViewMode, setMobileViewMode] = useState<ViewMode>("feed");
   const [isMdUp, setIsMdUp] = useState(false);
   const [synapseShareRequest, setSynapseShareRequest] = useState<{ id: string; nonce: number } | null>(null);
   const shareSlugFetchStartedRef = useRef<Set<string>>(new Set());

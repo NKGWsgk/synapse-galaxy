@@ -17,7 +17,8 @@ function modelId(): string {
 export { sanitizeEdgeKeywordBreakOutput } from "../edgeKeywordDisplay";
 
 /**
- * グラフ pill 用の改行は Gemini のみ（検証は sanitize）。API 失敗時は1行のまま flat を返す。
+ * グラフ pill 用の改行。決定論的な自然分割を先に試し、必要なときだけ Gemini に委ねる。
+ * API 失敗時は1行のまま flat を返す。
  */
 export async function suggestEdgeKeywordLineBreak(original: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
@@ -44,11 +45,11 @@ export async function suggestEdgeKeywordLineBreak(original: string): Promise<str
     "説明や前置き、マークダウンは書かず、求められた形式の JSON だけを返してください。";
 
   const userMessage = [
-    `渡す文は ${SYNAPSE_EDGE_AI_BREAK_FROM_CHARS} 文字以上だけです（それ未満は句読点での自動分割を試したあと、こちらには来ません）。`,
+    `渡す文は ${SYNAPSE_EDGE_AI_BREAK_FROM_CHARS} 文字以上だけです（それ未満は自動分割しません）。`,
     `また、このラベルはシステム上「最大 ${SYNAPSE_EDGE_TITLE_MAX_CHARS} 文字（Unicode で数えた字数）」までです。入力はすでにその範囲内です。改行を入れても増えるのは改行1文字分だけで、字数の上限ルールは変わりません。`,
-    `2行に分けるときは必ず「どちらの行も ${SYNAPSE_EDGE_LABEL_MIN_CHARS_PER_LINE} 文字以上かつ ${SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE} 文字以内（Unicode で数えた字数）」にしてください。目安は各行およそ ${SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE} 文字までで、なるべく均等に近い改行位置が望ましいです。この条件を満たせないときだけ改行なしで返してください。`,
-    "読点「、」など自然な切れ目がある短文でも2行に分けたほうがグラフ上で読みやすいです。極端に横に長い1行は他のカードと重なります。",
-    "適切な位置がない・切ると不自然なとき・各行18文字以内にできないときだけ、改行なしで返してください。",
+    `目的は、日本語として自然な最大2行にしつつ、グラフ上のラベル横幅をなるべく狭くすることです。2行に分けるときは必ず「どちらの行も ${SYNAPSE_EDGE_LABEL_MIN_CHARS_PER_LINE} 文字以上かつ ${SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE} 文字以内（Unicode で数えた字数）」にしてください。`,
+    `理想は各行およそ ${SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE} 文字以内です。12〜18文字程度の短文でも、意味の境目が自然なら積極的に2行にしてください。30文字近い文は 15文字前後ずつに割るのが望ましいです。`,
+    "適切な位置がない・切ると不自然なとき・条件を満たせないときだけ、改行なしで返してください。",
     "",
     "次のどちらか一方だけです。",
     "・改行なし：入力の文字列を1文字も変えずにそのまま返す（formatted は入力と完全一致）。",
@@ -60,8 +61,8 @@ export async function suggestEdgeKeywordLineBreak(original: string): Promise<str
     "・英字や数字が続いている部分の途中。",
     "・どちらかの行が「へ」など助詞1文字だけになるところ。",
     "",
-    "改行位置の最優先：読点「、」の直後（例：「…紡ぐ、\\n薄氷を…」）。句点「。」やカンマの直後も同様に優先する。",
-    "切ってよい例：上記の句読点直後、意味の小さなまとまりの境目、スペースの後。",
+    "改行位置の優先順：句読点の直後、助詞や接続表現の直後（例：Aと\\nB、Aから\\nB、Aによる\\nB、Aとしての\\nB）、意味の小さなまとまりの境目、スペースの後。",
+    "固有名詞・作品名・カタカナ語・英数字の連続の途中では切らないでください。",
     "",
     '答えは JSON だけ。{"formatted":"…"} の形。改行を入れてよいのはその1文字分だけ。',
     '例：{"formatted":"1行目\\n2行目"}',

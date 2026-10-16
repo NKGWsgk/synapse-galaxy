@@ -3,9 +3,9 @@ export const SYNAPSE_EDGE_TITLE_MAX_CHARS = 30;
 
 /**
  * グラフ pill の1行あたりの目安（Unicode グリフ）。AI 改行指示・表示の強制分割の基準。
- * 横に長くなりすぎてカードと被るのを抑える。
+ * 15字だとカード間の線上で横幅が詰まりやすいため、短めの2行を優先する。
  */
-export const SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE = 15;
+export const SYNAPSE_EDGE_LABEL_TARGET_CHARS_PER_LINE = 12;
 
 /** pill 1行の上限（これを超えるなら 2 行に分ける／AI 応答は却下） */
 export const SYNAPSE_EDGE_LABEL_MAX_CHARS_PER_LINE = 18;

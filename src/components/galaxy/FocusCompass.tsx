@@ -95,12 +95,8 @@ function angleDiffRad(a: number, b: number): number {
   return Math.abs(d);
 }
 
-/** 接続次元の線の色 */
-const DIM_LINE_COLOR: Record<"rika" | "bunkei" | "art", { strong: string; mid: string; weak: string }> = {
-  rika:   { strong: "rgba(59,130,246,0.92)",  mid: "rgba(59,130,246,0.62)",  weak: "rgba(59,130,246,0.42)"  },
-  bunkei: { strong: "rgba(234,179,8,0.92)",   mid: "rgba(234,179,8,0.65)",   weak: "rgba(234,179,8,0.45)"   },
-  art:    { strong: "rgba(239,68,68,0.90)",   mid: "rgba(239,68,68,0.60)",   weak: "rgba(239,68,68,0.42)"   },
-};
+const SYNAPSE_LINE_STROKE = "rgba(82,82,91,0.56)";
+const SYNAPSE_ARROW_FILL = "rgba(82,82,91,0.78)";
 
 function hostLabel(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ""); }
@@ -925,27 +921,9 @@ function strokeWidth(seg: Segment): number {
   return 0.66;
 }
 
-/**
- * 線の色：
- * - 次元ゾーンがあれば → 理系=青, 文系=黄, 芸術=赤
- * - なければ indigo（フォールバック）
- * 明度はalignmentで調整
- */
-function strokeColor(seg: Segment): string {
-  const zone = seg.dimZone;
-  if (zone) {
-    const palette = DIM_LINE_COLOR[zone];
-    if (seg.dimAlignment != null) {
-      if (seg.dimAlignment >= 0.65) return palette.strong;
-      if (seg.dimAlignment >= 0.35) return palette.mid;
-      return palette.weak;
-    }
-    return palette.mid;
-  }
-  // フォールバック（dim データなし）
-  if (seg.count >= 3) return "rgba(99,102,241,0.78)";
-  if (seg.count >= 2) return "rgba(79,70,229,0.68)";
-  return "rgba(79,70,229,0.58)";
+/** 線の色：次元では色分けせず、全シナプス線を同じ中立色にする */
+function strokeColor(): string {
+  return SYNAPSE_LINE_STROKE;
 }
 
 /** 弱い接続は点線 */
@@ -954,12 +932,12 @@ function strokeDash(seg: Segment): string | undefined {
   return undefined;
 }
 
-/** ゾーンごとの矢印マーカー定義 */
+/** 矢印マーカー定義（互換のためIDは維持しつつ、色は統一） */
 const ARROW_MARKERS = [
-  { id: "ring-arrow-rika",    fill: "rgba(37,99,235,1)"     },
-  { id: "ring-arrow-bunkei",  fill: "rgba(202,138,4,1)"     },
-  { id: "ring-arrow-art",     fill: "rgba(220,38,38,1)"     },
-  { id: "ring-arrow-default", fill: "rgba(79,70,229,1)"     },
+  { id: "ring-arrow-rika",    fill: SYNAPSE_ARROW_FILL },
+  { id: "ring-arrow-bunkei",  fill: SYNAPSE_ARROW_FILL },
+  { id: "ring-arrow-art",     fill: SYNAPSE_ARROW_FILL },
+  { id: "ring-arrow-default", fill: SYNAPSE_ARROW_FILL },
 ] as const;
 
 /** 三角矢印（userSpaceOnUse）。底辺を ref にし、+x 側に先端 — 線は底辺で止め、先端は三角のみ */
@@ -1031,7 +1009,7 @@ function RingLinesSvg({ segments }: { segments: Segment[] }) {
           <line
             key={idx}
             x1={x1} y1={y1} x2={end.x} y2={end.y}
-            stroke={strokeColor(it)}
+            stroke={strokeColor()}
             strokeWidth={w}
             strokeLinecap="butt"
             strokeDasharray={strokeDash(it)}
@@ -1133,7 +1111,7 @@ function CrossLinesSvg({ segments }: { segments: Segment[] }) {
           markerUnits="userSpaceOnUse"
           overflow="visible"
         >
-          <path d={RING_ARROW_PATH} fill="rgba(79,70,229,0.82)" />
+          <path d={RING_ARROW_PATH} fill={SYNAPSE_ARROW_FILL} />
         </marker>
       </defs>
       {segments.map((it, idx) => {
@@ -1142,7 +1120,7 @@ function CrossLinesSvg({ segments }: { segments: Segment[] }) {
           <line
             key={idx}
             x1={it.x1} y1={it.y1} x2={end.x} y2={end.y}
-            stroke="rgba(79,70,229,0.55)"
+            stroke={SYNAPSE_LINE_STROKE}
             strokeWidth="0.72"
             strokeLinecap="butt"
             strokeDasharray="1.5 2"
@@ -1696,15 +1674,6 @@ export function GlobalMapSvg({ focusUrl, synapses, onFocusUrl }: Props) {
               const [sr, sc] = srcPos;
               const [tr, tc] = tgtPos;
 
-              // 色: シナプス次元
-              const sd = synapseToDims(s);
-              const zone = sd ? getDominantDim(sd) : "balanced";
-              const stroke =
-                zone === "rika"   ? "rgba(59,130,246,0.55)" :
-                zone === "bunkei" ? "rgba(234,179,8,0.60)"  :
-                zone === "art"    ? "rgba(239,68,68,0.55)"  :
-                "rgba(99,102,241,0.40)";
-
               // 直線（セル中央 → セル中央）
               const x1 = sc + 0.5;
               const y1 = sr + 0.5;
@@ -1715,7 +1684,7 @@ export function GlobalMapSvg({ focusUrl, synapses, onFocusUrl }: Props) {
                 <line
                   key={s.id}
                   x1={x1} y1={y1} x2={x2} y2={y2}
-                  stroke={stroke}
+                  stroke={SYNAPSE_LINE_STROKE}
                   strokeWidth="0.07"
                   strokeLinecap="round"
                 />
