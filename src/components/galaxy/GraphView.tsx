@@ -2777,7 +2777,7 @@ export function GraphView({
     <>
       <div
         ref={viewportRef}
-        className="relative h-full w-full overflow-hidden"
+        className="relative h-full w-full select-none overflow-hidden"
         onPointerDown={onBgPointerDown}
         onPointerMove={onBgPointerMove}
         onPointerUp={onBgPointerUp}

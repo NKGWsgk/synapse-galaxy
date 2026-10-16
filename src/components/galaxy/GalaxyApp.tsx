@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { AuthFeedbackProvider } from "./AuthFeedback";
@@ -47,6 +47,9 @@ function pickInitialFocusUrl(synapses: SynapseRow[]): string | null {
 const GATE_UNLOGGED = 8;
 const GATE_LOGGED = 30;
 const GATE_POST_COUNT = 5;
+
+/** マップ（銀河グラフ）への表示閾値: 作品がこの数以上のシナプスに登場して初めてノード化する */
+const MAP_MIN_CONNECTIONS = 3;
 const STORAGE_KEY = "sgViewCount";
 const MOBILE_VIEW_KEY = "sgMobileView";
 
@@ -340,6 +343,25 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
     if (user) setUserPostCount((prev) => prev + 1);
   }, [refresh, user, workEndpoints]);
 
+  /** マップ表示用フィルタ済みシナプス: 両端が MAP_MIN_CONNECTIONS 以上の接続を持つもののみ */
+  const graphSynapses = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of synapses) {
+      const src = normalizeSynapseEndpoint(s.source_url);
+      const tgt = normalizeSynapseEndpoint(s.target_url);
+      counts.set(src, (counts.get(src) ?? 0) + 1);
+      counts.set(tgt, (counts.get(tgt) ?? 0) + 1);
+    }
+    return synapses.filter((s) => {
+      const src = normalizeSynapseEndpoint(s.source_url);
+      const tgt = normalizeSynapseEndpoint(s.target_url);
+      return (
+        (counts.get(src) ?? 0) >= MAP_MIN_CONNECTIONS &&
+        (counts.get(tgt) ?? 0) >= MAP_MIN_CONNECTIONS
+      );
+    });
+  }, [synapses]);
+
   const feedViewActive = mobileViewMode === "feed";
 
   useEffect(() => {
@@ -474,7 +496,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
                           : "mobile-graph-hidden"
                     }
                     focusUrl={focusUrl}
-                    synapses={synapses}
+                    synapses={graphSynapses}
                     workMap={workEndpoints}
                     onFocusUrl={handleFocusUrl}
                     mobileMenuOpen={mobileNavOpen}

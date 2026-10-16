@@ -548,12 +548,16 @@ export function SmartInputPanel({
       </button>
 
       {message ? (
-        <p
-          role="alert"
-          className={`text-xs ${message.includes("！") ? "text-emerald-600" : "text-rose-700"}`}
-        >
-          {message}
-        </p>
+        <div role="alert" className="space-y-1">
+          <p className={`text-xs ${message.includes("！") ? "text-emerald-600" : "text-rose-700"}`}>
+            {message}
+          </p>
+          {message.includes("！") ? (
+            <p className="text-[11px] leading-relaxed text-zinc-400">
+              💡 銀河マップには、作品が3つ以上のシナプスで繋がると表示されます。フィードにはすぐ反映されます。
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       {/* 確定確認モーダル */}
