@@ -390,26 +390,6 @@ export function Header({
         </form>
       </div>
 
-      <Link
-        href="/news/like-award"
-        onClick={closeMobile}
-        className="group rounded-xl border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-indigo-50 px-3 py-2.5 shadow-sm transition hover:border-amber-300 hover:shadow-md"
-      >
-        <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-600">
-          <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20" aria-hidden>
-            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-          </svg>
-          Open Campaign
-        </span>
-        <span className="mt-1 flex items-center justify-between gap-2 text-xs font-semibold text-zinc-900">
-          <span>「いいね！」アワード 11/11〜25</span>
-          <span className="text-amber-500 transition group-hover:translate-x-0.5" aria-hidden>→</span>
-        </span>
-        <span className="mt-1 block text-[11px] leading-relaxed text-zinc-500">
-          上位3名にAmazonギフトカード3,000円
-        </span>
-      </Link>
-
       {/* シナプス接続パネル（常時表示） */}
       <section className="rounded-xl border border-zinc-200 bg-white p-3">
         <div className="mb-2 flex items-center gap-1.5">
@@ -424,7 +404,7 @@ export function Header({
       {/* ランキング（常時表示） */}
       <section className="rounded-xl border border-zinc-200 bg-white">
         <div className="flex items-center gap-1.5 border-b border-zinc-100 px-3 py-2">
-          <svg className="h-3.5 w-3.5 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
+          <svg className="h-3.5 w-3.5 text-violet-400" fill="currentColor" viewBox="0 0 20 20">
             <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
           </svg>
           <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">ランキング</span>
@@ -442,9 +422,9 @@ export function Header({
                 <a href={`/user/${entry.userId}`} className="flex items-center gap-2.5 px-3 py-2 transition hover:bg-zinc-50">
                   <span className={[
                     "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
-                    entry.rank === 1 ? "bg-amber-100 text-amber-600" :
+                    entry.rank === 1 ? "bg-violet-100 text-violet-600" :
                     entry.rank === 2 ? "bg-zinc-200 text-zinc-600" :
-                    entry.rank === 3 ? "bg-orange-100 text-orange-600" :
+                    entry.rank === 3 ? "bg-fuchsia-100 text-fuchsia-600" :
                     "bg-zinc-100 text-zinc-500",
                   ].join(" ")}>{entry.rank}</span>
                   {entry.avatar ? (

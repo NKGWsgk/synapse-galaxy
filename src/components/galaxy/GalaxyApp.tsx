@@ -18,6 +18,7 @@ import { isAcceptableShareSlug } from "@/lib/workShareSlug";
 import { readSynapseIdFromLocation, writeSynapseIdToUrl } from "@/lib/synapseShareUrl";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import type { WorkEndpointMap } from "@/lib/workResolve";
+import { CampaignPopup } from "./CampaignPopup";
 
 function mostConnectedUrl(synapses: SynapseRow[]): string | null {
   const counts = new Map<string, number>();
@@ -466,6 +467,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
 
         <main className="relative min-h-0 flex-1 overflow-hidden">
           <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,rgba(99,102,241,0.05),transparent_60%)]" />
+          <CampaignPopup />
           <AnimatePresence mode="wait">
             {!synapsesLoaded ? (
               <div key="loading" className="h-full w-full">
