@@ -5,7 +5,7 @@ import { SITE_NAME_EN, SITE_NAME_JA } from "@/lib/siteMetadata";
 export const metadata: Metadata = {
   title: "「いいね！」アワード",
   description:
-    "SYNAPSE Galaxy「いいね！」アワード開催中。11月11日〜12月1日の期間に「接続レビュー」を投稿して、いいね数を競おう。上位3名にAmazonギフトカードをプレゼント！",
+    "SYNAPSE Galaxy「いいね！」アワード開催中。11月11日〜25日の期間に「接続レビュー」を投稿して、いいね数を競おう。上位3名にAmazonギフトカードをプレゼント！",
   alternates: {
     canonical: "/news/like-award",
   },
@@ -101,13 +101,13 @@ export default function LikeAwardNewsPage() {
                   </p>
                 </div>
                 <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4">
-                  <h3 className="font-semibold text-zinc-900">【レビューエントリー期間】11月11日〜12月1日</h3>
+                  <h3 className="font-semibold text-zinc-900">【レビューエントリー期間】11月11日〜25日</h3>
                   <p className="mt-2">
                     期間中にサイト内で投稿されたシナプス（接続レビュー）が、すべて自動的にランキング対象となります。期間中であれば何件でも投稿できます。
                   </p>
                 </div>
                 <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4">
-                  <h3 className="font-semibold text-zinc-900">【いいね集計・審査期間】12月1日〜8日</h3>
+                  <h3 className="font-semibold text-zinc-900">【いいね集計・審査期間】11月25日〜12月1日</h3>
                   <p className="mt-2">
                     新規エントリー受付がストップし、公開されたレビューへの「いいね」集計に特化する期間です。
                     運営にてアクセスログの確認およびレビュー内容の品質審査を行います。
@@ -115,7 +115,7 @@ export default function LikeAwardNewsPage() {
                 </div>
               </div>
               <p className="mt-4">
-                その後、12月10日ごろにサイト上にて上位3名を発表します。該当者の登録メールアドレス宛にAmazonギフトカードのデジタルコードを送付いたします。
+                その後、12月3日ごろにサイト上にて上位3名を発表します。該当者の登録メールアドレス宛にAmazonギフトカードのデジタルコードを送付いたします。
               </p>
             </section>
 
