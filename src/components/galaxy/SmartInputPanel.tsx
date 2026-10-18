@@ -84,7 +84,7 @@ function AllowedUrlHint() {
       <button
         type="button"
         aria-label="作品の入力方法について"
-        className="inline-flex h-3.5 w-3.5 items-center justify-center text-zinc-400 transition hover:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+        className="inline-flex h-3.5 w-3.5 items-center justify-center text-zinc-400 transition hover:text-[#1A1B50] focus:outline-none focus:ring-2 focus:ring-[#1A1B50]/10"
       >
         <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
           <circle cx="12" cy="12" r="10" />
@@ -172,10 +172,10 @@ function WorkEndpointField({
       <input
         id={id}
         className={[
-          "w-full rounded-lg border bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:outline-none focus:ring-2",
+          "w-full border-0 border-b bg-transparent px-0 py-1 text-sm text-[#0D0D1C] placeholder:text-zinc-400 focus:outline-none focus:ring-0",
           error
-            ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
-            : "border-zinc-200 focus:border-indigo-300 focus:ring-indigo-100",
+            ? "border-rose-300 focus:border-rose-400"
+            : "border-[#1A1B50]/15 focus:border-[#1A1B50]",
         ].join(" ")}
         value={value}
         onChange={(e) => {
@@ -190,7 +190,7 @@ function WorkEndpointField({
         autoComplete="off"
       />
       {loading ? (
-        <div className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin rounded-full border-2 border-indigo-300 border-t-transparent" />
+        <div className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin rounded-full border-2 border-[#2D2F7A] border-t-transparent" />
       ) : null}
       {showDropdown ? (
         <div className="absolute left-0 top-full z-50 mt-1 w-full overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl">
@@ -210,7 +210,7 @@ function WorkEndpointField({
                   <div className="h-8 w-8 shrink-0 rounded-md bg-zinc-100" />
                 )}
                 <div className="min-w-0 flex-1">
-                  {r.siteName ? <p className="text-[10px] font-medium text-indigo-600">{r.siteName}</p> : null}
+                  {r.siteName ? <p className="text-[10px] font-medium text-[#1A1B50]">{r.siteName}</p> : null}
                   <p className="truncate text-xs font-semibold text-zinc-900">{r.title ?? r.url}</p>
                 </div>
               </button>
@@ -309,7 +309,7 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
   const title = formatWorkDisplayTitle(data?.title ?? null, url) ?? data?.title?.trim() ?? null;
 
   return (
-    <div className="min-w-0 w-full rounded-xl border border-zinc-200 bg-white p-2 shadow-sm">
+    <div className="min-w-0 w-full rounded-[4px] border-l-2 border-l-[#1A1B50]/20 border border-[#1A1B50]/8 bg-zinc-50 p-2">
       <div className="mb-1 flex items-center justify-between gap-2">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">{label}</p>
         {loading ? <span className="text-[10px] text-zinc-400">取得中…</span> : null}
@@ -331,7 +331,7 @@ function OgpPreviewCard({ url, label }: { url: string; label: string }) {
           </div>
           <div className="min-w-0">
             {data?.siteName ? (
-              <p className="truncate text-[10px] font-medium leading-tight text-indigo-600">{data.siteName}</p>
+              <p className="truncate text-[10px] font-medium leading-tight text-[#1A1B50]">{data.siteName}</p>
             ) : null}
             <p className="truncate text-xs font-semibold leading-snug text-zinc-900">
               {loading ? "読み込み中…" : (title ?? "（タイトル取得なし）")}
@@ -462,9 +462,12 @@ export function SmartInputPanel({
   return (
     <form onSubmit={handleSubmitClick} className="space-y-2">
       {!user ? (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
-          投稿にはGoogleログインが必要です
-        </p>
+        <div className="flex items-center gap-2 border-l-2 border-l-[#0891B2] bg-[#0891B2]/7 px-3 py-1.5">
+          <svg className="h-3 w-3 shrink-0 text-[#0891B2]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <circle cx="12" cy="12" r="10" /><path strokeLinecap="round" d="M12 16v-4M12 8h.01" />
+          </svg>
+          <p className="text-xs text-[#0891B2]">Googleログインが必要です</p>
+        </div>
       ) : null}
 
       <motion.div layout className="grid items-start gap-3 sm:grid-cols-2 sm:items-stretch sm:gap-1.5">
@@ -507,7 +510,7 @@ export function SmartInputPanel({
         <label className="block text-[11px] font-medium text-zinc-600">
           接続タイトル
           <input
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            className="mt-0.5 w-full border-0 border-b border-[#1A1B50]/15 bg-transparent px-0 py-1 text-sm text-[#0D0D1C] placeholder:text-zinc-400 focus:border-[#1A1B50] focus:outline-none focus:ring-0"
             value={title}
             onChange={(e) => setTitle(e.target.value.slice(0, TITLE_MAX))}
             placeholder="例: 科学データの送信、言語と沈黙…"
@@ -524,7 +527,7 @@ export function SmartInputPanel({
         <label className="block text-[11px] font-medium text-zinc-600">
           接続理由
           <textarea
-            className="mt-0.5 min-h-[56px] w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-sm text-zinc-900 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            className="mt-0.5 min-h-[56px] w-full border-0 border-b border-[#1A1B50]/15 bg-transparent px-0 py-1 text-sm text-[#0D0D1C] placeholder:text-zinc-400 focus:border-[#1A1B50] focus:outline-none focus:ring-0 resize-none"
             value={description}
             onChange={(e) => setDescription(e.target.value.slice(0, REASON_MAX))}
             placeholder="なぜこの2作品は繋がるのか…"
@@ -542,7 +545,7 @@ export function SmartInputPanel({
       <button
         type="submit"
         disabled={loading || !user || hasUrlError}
-        className="w-full rounded-full bg-indigo-600 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
+        className="w-full rounded-[4px] bg-[#1A1B50] py-2 text-sm font-semibold text-white transition hover:bg-[#2D2F7A] disabled:opacity-40"
       >
         {loading ? "保存中…" : "シナプスを繋ぐ"}
       </button>
@@ -577,7 +580,7 @@ export function SmartInputPanel({
               onClick={() => !loading && setConfirmOpen(false)}
             />
             <motion.div
-              className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.22)]"
+              className="relative z-10 w-full max-w-md overflow-hidden rounded-[4px] border border-[#1A1B50]/12 bg-white shadow-[0_24px_64px_rgba(0,0,0,0.18)]"
               initial={{ scale: 0.94, y: 16 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.94, y: 16 }}
@@ -597,7 +600,7 @@ export function SmartInputPanel({
 
               <div className="max-h-[60vh] overflow-y-auto px-5 py-4 space-y-3">
                 {/* 警告 */}
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+                <div className="border-l-2 border-l-rose-400 bg-rose-50 px-3 py-2 text-xs leading-relaxed text-rose-700">
                   <p className="font-semibold">⚠ 確定後は内容を変更できません</p>
                 </div>
 
@@ -625,7 +628,7 @@ export function SmartInputPanel({
                   type="button"
                   onClick={() => setConfirmOpen(false)}
                   disabled={loading}
-                  className="rounded-full px-4 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:opacity-50"
+                  className="rounded-[4px] px-4 py-1.5 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-40"
                 >
                   戻って修正
                 </button>
@@ -633,7 +636,7 @@ export function SmartInputPanel({
                   type="button"
                   onClick={confirmAndSubmit}
                   disabled={loading}
-                  className="rounded-full bg-indigo-600 px-5 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
+                  className="rounded-[4px] bg-[#1A1B50] px-5 py-1.5 text-sm font-semibold text-white transition hover:bg-[#2D2F7A] disabled:opacity-40"
                 >
                   {loading ? "保存中…" : "確定して繋ぐ"}
                 </button>
