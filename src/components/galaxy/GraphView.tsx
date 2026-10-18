@@ -1439,20 +1439,6 @@ export function GraphView({
   const [, setTick] = useState(0);
   const rafRef = useRef<number | null>(null);
 
-  // Server-cached positions fetched on mount — avoids d3 on first render
-  const serverLayoutRef = useRef<Map<string, { x: number; y: number }> | null>(null);
-  useEffect(() => {
-    fetch("/api/layout")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { positions?: { norm: string; x: number; y: number }[] } | null) => {
-        if (!data?.positions?.length) return;
-        const map = new Map<string, { x: number; y: number }>();
-        for (const p of data.positions) map.set(p.norm, { x: p.x, y: p.y });
-        serverLayoutRef.current = map;
-      })
-      .catch(() => {});
-  }, []);
-
   // ── Build the GLOBAL world layout (all nodes + all synapses) ──────────────
   // Runs whenever `synapses` identity changes. Pre-settles d3-force ~400 ticks
   // synchronously so positions are stable before first paint. Positions for
@@ -1602,29 +1588,6 @@ export function GraphView({
       worldPositionsRef.current = new Map();
       setTick((t) => (t + 1) % 1000000);
       return;
-    }
-
-    // Fast path: if server has pre-computed positions, skip d3 entirely
-    if (serverLayoutRef.current && serverLayoutRef.current.size > 0) {
-      const cached = serverLayoutRef.current;
-      const newPositions = new Map<string, { x: number; y: number }>();
-      for (const n of worldNodes) {
-        const pos = cached.get(n.norm);
-        if (pos) {
-          n.x = pos.x;
-          n.y = pos.y;
-          n.fx = pos.x;
-          n.fy = pos.y;
-          newPositions.set(n.norm, pos);
-        }
-      }
-      if (newPositions.size > 0) {
-        worldPositionsRef.current = newPositions;
-        simNodesRef.current = worldNodes;
-        simLinksRef.current = worldLinks;
-        setTick((t) => (t + 1) % 1000000);
-        return;
-      }
     }
 
     const mainWorldNodes = worldNodes.filter((n) => mainNormSet.has(n.norm));
