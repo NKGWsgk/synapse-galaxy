@@ -159,6 +159,11 @@ export async function POST(req: Request) {
       );
     }
 
+    // Trigger async layout recompute — fire-and-forget, does not block response
+    void fetch(new URL("/api/layout", req.url).toString(), { method: "POST" }).catch((err) => {
+      console.warn("[smart-input] layout recompute trigger failed:", err);
+    });
+
     return NextResponse.json({ synapse: data });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
