@@ -50,7 +50,7 @@ const GATE_LOGGED = 30;
 const GATE_POST_COUNT = 5;
 
 /** マップ（銀河グラフ）への表示閾値: 作品がこの数以上のシナプスに登場して初めてノード化する */
-const MAP_MIN_CONNECTIONS = 3;
+const MAP_MIN_CONNECTIONS = 2;
 const STORAGE_KEY = "sgViewCount";
 const MOBILE_VIEW_KEY = "sgMobileView";
 
