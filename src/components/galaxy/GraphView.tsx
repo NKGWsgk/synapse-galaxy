@@ -1766,6 +1766,19 @@ export function GraphView({
         return { node: n, prefAngle, placedNeighborCount: placedAngles.length };
       });
 
+      // When all nodes in this ring converge on the same preferred angle
+      // (the typical ring-1 case: their only placed neighbour is the hub
+      // at (0,0), so atan2(0,0)=0 for every node), redistribute them
+      // evenly around the circle instead of letting them all pile up near 0°.
+      if (withAngle.length > 1) {
+        const first = withAngle[0].prefAngle;
+        if (withAngle.every((wa) => wa.prefAngle === first)) {
+          const sorted = [...withAngle].sort((a, b) => a.node.norm.localeCompare(b.node.norm));
+          const step = (2 * Math.PI) / withAngle.length;
+          sorted.forEach((wa, i) => { wa.prefAngle = i * step - Math.PI; });
+        }
+      }
+
       // Sort by number of placed neighbors descending (most-constrained first),
       // then by pref angle, then norm. Nodes with more placed neighbors have
       // less room for adjustment, so we satisfy them first.

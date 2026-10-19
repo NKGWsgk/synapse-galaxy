@@ -285,6 +285,17 @@ function snapComponentToRings(
       return { norm, prefAngle, placedNeighborCount: placedAngles.length };
     });
 
+    // Ring-1 nodes have the hub (0,0) as their only placed neighbour → atan2(0,0)=0
+    // for all of them → they all pile up near 0°. Detect this and redistribute evenly.
+    if (withAngle.length > 1) {
+      const first = withAngle[0].prefAngle;
+      if (withAngle.every((wa) => wa.prefAngle === first)) {
+        const sorted = [...withAngle].sort((a, b) => a.norm.localeCompare(b.norm));
+        const step = (2 * Math.PI) / withAngle.length;
+        sorted.forEach((wa, i) => { wa.prefAngle = i * step - Math.PI; });
+      }
+    }
+
     withAngle.sort((a, b) => {
       if (a.placedNeighborCount !== b.placedNeighborCount) return b.placedNeighborCount - a.placedNeighborCount;
       if (a.prefAngle !== b.prefAngle) return a.prefAngle - b.prefAngle;
