@@ -53,17 +53,14 @@ export async function GET(req: Request) {
       return [row.source_url, row.target_url].filter((u): u is string => typeof u === "string");
     });
 
-    // 作品タイトル・サムネは DB を正とする。不足・弱いメタは先に埋めてから workEndpoints を組み立てる。
-    try {
-      const service = createServiceClient();
-      await ensureMetadataForEndpointUrls(service, endpointUrls, 4, 40);
-      // share_slug backfill は応答をブロックしない（Gemini 呼び出しが多い）
-      void backfillShareSlugsForEndpointUrls(service, endpointUrls).catch((e) => {
-        console.error("[synapses/share_slug backfill]", e);
-      });
-    } catch (e) {
+    // メタデータ補完とshare_slug backfillはレスポンスをブロックしない（バックグラウンド実行）
+    const service = createServiceClient();
+    void ensureMetadataForEndpointUrls(service, endpointUrls, 4, 40).catch((e) => {
       console.error("[synapses/metadata ensure]", e);
-    }
+    });
+    void backfillShareSlugsForEndpointUrls(service, endpointUrls).catch((e) => {
+      console.error("[synapses/share_slug backfill]", e);
+    });
 
     const [workEndpoints, layoutResult] = await Promise.all([
       buildWorkEndpointMap(supabase, endpointUrls),
@@ -72,7 +69,9 @@ export async function GET(req: Request) {
 
     const layoutPositions = (layoutResult.data?.positions as Array<{ norm: string; x: number; y: number }> | null) ?? null;
 
-    return NextResponse.json({ synapses: all, workEndpoints, layoutPositions });
+    return NextResponse.json({ synapses: all, workEndpoints, layoutPositions }, {
+      headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=120" },
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

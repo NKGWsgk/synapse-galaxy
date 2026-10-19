@@ -1441,6 +1441,8 @@ export function GraphView({
   // tick counter triggers re-render on each ticked frame
   const [, setTick] = useState(0);
   const rafRef = useRef<number | null>(null);
+  // Set to true by the fast-path so reveal effect skips the fade-in animation
+  const usedFastPathRef = useRef(false);
 
   // ── Build the GLOBAL world layout (all nodes + all synapses) ──────────────
   // Runs whenever `synapses` identity changes. Pre-settles d3-force ~400 ticks
@@ -1609,6 +1611,7 @@ export function GraphView({
         simNodesRef.current = worldNodes;
         simLinksRef.current = worldLinks;
         simRef.current = null;
+        usedFastPathRef.current = true;
         setTick((t) => (t + 1) % 1000000);
         return;
       }
@@ -1911,6 +1914,17 @@ export function GraphView({
     if (synapses.length === 0) return;
     const token = ++revealTokenRef.current;
     setRevealRadius(0);
+
+    // Fast-path: positions already known — skip animation, show all nodes instantly
+    if (usedFastPathRef.current) {
+      usedFastPathRef.current = false;
+      let maxR = LINK_DISTANCE;
+      for (const pos of worldPositionsRef.current.values()) {
+        maxR = Math.max(maxR, Math.hypot(pos.x, pos.y));
+      }
+      setRevealRadius(maxR + CARD_W);
+      return;
+    }
 
     let raf = 0;
     const startTimer = window.setTimeout(() => {
