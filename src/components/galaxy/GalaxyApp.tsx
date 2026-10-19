@@ -50,7 +50,7 @@ const GATE_LOGGED = 30;
 const GATE_POST_COUNT = 5;
 
 /** マップ（銀河グラフ）への表示閾値: 作品がこの数以上のシナプスに登場して初めてノード化する */
-const MAP_MIN_CONNECTIONS = 2;
+const MAP_MIN_CONNECTIONS = 1;
 const STORAGE_KEY = "sgViewCount";
 const MOBILE_VIEW_KEY = "sgMobileView";
 
@@ -192,6 +192,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   const [synapses, setSynapses] = useState<SynapseRow[]>([]);
   const [workEndpoints, setWorkEndpoints] = useState<WorkEndpointMap>({});
   const [synapsesLoaded, setSynapsesLoaded] = useState(false);
+  const [initialLayout, setInitialLayout] = useState<Map<string, { x: number; y: number }> | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [focusUrl, setFocusUrl] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -220,6 +221,10 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
       if (!res.ok) throw new Error(data.error ?? res.statusText);
       const list = data.synapses as SynapseRow[];
       const endpoints = (data.workEndpoints as WorkEndpointMap | undefined) ?? {};
+      const rawPositions = data.layoutPositions as Array<{ norm: string; x: number; y: number }> | null | undefined;
+      if (rawPositions && rawPositions.length > 0) {
+        setInitialLayout(new Map(rawPositions.map(({ norm, x, y }) => [norm, { x, y }])));
+      }
       setSynapses(list);
       setWorkEndpoints(endpoints);
       setLoadError(null);
@@ -500,6 +505,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
                     focusUrl={focusUrl}
                     synapses={graphSynapses}
                     workMap={workEndpoints}
+                    initialLayout={initialLayout}
                     onFocusUrl={handleFocusUrl}
                     mobileMenuOpen={mobileNavOpen}
                     synapseShareRequest={feedViewActive ? null : synapseShareRequest}

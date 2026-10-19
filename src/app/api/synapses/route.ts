@@ -65,9 +65,14 @@ export async function GET(req: Request) {
       console.error("[synapses/metadata ensure]", e);
     }
 
-    const workEndpoints = await buildWorkEndpointMap(supabase, endpointUrls);
+    const [workEndpoints, layoutResult] = await Promise.all([
+      buildWorkEndpointMap(supabase, endpointUrls),
+      supabase.from("layout_cache").select("positions").eq("id", 1).single(),
+    ]);
 
-    return NextResponse.json({ synapses: all, workEndpoints });
+    const layoutPositions = (layoutResult.data?.positions as Array<{ norm: string; x: number; y: number }> | null) ?? null;
+
+    return NextResponse.json({ synapses: all, workEndpoints, layoutPositions });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

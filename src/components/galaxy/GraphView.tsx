@@ -60,6 +60,8 @@ type Props = {
   synapseShareRequest?: SynapseShareRequest | null;
   onSynapseShareRequestHandled?: () => void;
   onSynapseShareChange?: (id: string | null) => void;
+  /** Pre-computed server-side layout positions (skips d3 on first render) */
+  initialLayout?: Map<string, { x: number; y: number }> | null;
 };
 
 // ── Layout constants ─────────────────────────────────────────────────────────
@@ -1330,6 +1332,7 @@ export function GraphView({
   synapseShareRequest,
   onSynapseShareRequestHandled,
   onSynapseShareChange,
+  initialLayout,
 }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentLayerRef = useRef<HTMLDivElement>(null);
@@ -1588,6 +1591,27 @@ export function GraphView({
       worldPositionsRef.current = new Map();
       setTick((t) => (t + 1) % 1000000);
       return;
+    }
+
+    // Fast path: use server-cached layout when all nodes are covered.
+    // initialLayout arrives in the same state batch as synapses (bundled in
+    // /api/synapses response), so this fires before camera/reveal effects.
+    if (initialLayout && initialLayout.size > 0) {
+      const allCovered = worldNodes.every((n) => initialLayout.has(n.norm));
+      if (allCovered) {
+        const newPositions = new Map<string, { x: number; y: number }>();
+        for (const n of worldNodes) {
+          const pos = initialLayout.get(n.norm)!;
+          n.x = pos.x; n.y = pos.y; n.fx = pos.x; n.fy = pos.y;
+          newPositions.set(n.norm, pos);
+        }
+        worldPositionsRef.current = newPositions;
+        simNodesRef.current = worldNodes;
+        simLinksRef.current = worldLinks;
+        simRef.current = null;
+        setTick((t) => (t + 1) % 1000000);
+        return;
+      }
     }
 
     const mainWorldNodes = worldNodes.filter((n) => mainNormSet.has(n.norm));
@@ -1881,7 +1905,7 @@ export function GraphView({
     return () => {
       sim.stop();
     };
-  }, [synapses, workMap]);
+  }, [synapses, workMap, initialLayout]);
 
   useEffect(() => {
     if (synapses.length === 0) return;
