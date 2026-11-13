@@ -7,6 +7,8 @@ const D = 320;
 /** Card half extents incl. padding, matching the label-overlap test in GraphView. */
 const CARD_HALF_W = 76;
 const CARD_HALF_H = 61;
+/** GraphView draws labels on the visible line, which stops ARROW_LEN short of the target card. */
+const LABEL_ARROW_SHIFT = 5;
 /** A card must stay at least this far (in D) from any other group's cards: the next slot over. */
 const ISLAND_MARGIN = 1.05;
 /** ...and at least this far (px) from any other group's edges, so no card sits on a line. */
@@ -111,6 +113,25 @@ function distPointSeg(p: Pt, a: Pt, b: Pt): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
+/**
+ * Would the pill on the edge a-b overlap either card? It sits mid-way along the
+ * visible line, nudged LABEL_ARROW_SHIFT towards the source — direction is not
+ * known here, so both nudges are tested.
+ */
+function labelHitsCard(a: Pt, b: Pt, box: LabelBox): boolean {
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const ux = (b.x - a.x) / len;
+  const uy = (b.y - a.y) / len;
+  for (const sign of [-1, 1]) {
+    const mx = (a.x + b.x) / 2 + sign * ux * LABEL_ARROW_SHIFT;
+    const my = (a.y + b.y) / 2 + sign * uy * LABEL_ARROW_SHIFT;
+    for (const c of [a, b]) {
+      if (Math.abs(mx - c.x) < CARD_HALF_W + box.hw && Math.abs(my - c.y) < CARD_HALF_H + box.hh) return true;
+    }
+  }
+  return false;
+}
+
 const wrapAngle = (a: number) => {
   let x = a % (2 * Math.PI);
   if (x > Math.PI) x -= 2 * Math.PI;
@@ -168,6 +189,7 @@ function placeRings(
 
   const placed = new Map<string, Pt>([[root, { x: 0, y: 0 }]]);
   const angleOf = new Map<string, number>();
+  const placedLabels: Array<{ x: number; y: number; hw: number; hh: number }> = [];
   let prevRadius = 0;
 
   for (let k = 1; k < levels.length; k++) {
@@ -210,6 +232,52 @@ function placeRings(
       pref.set(v, wrapAngle(a));
     });
 
+    // The first ring has few works, so try every arrangement instead of placing greedily:
+    // keep close to the even spread, and keep label pills off each other and off the cards.
+    let forced: Map<string, number> | null = null;
+    if (k === 1 && slots === 6 && group.length >= 2 && group.length <= 6) {
+      const sets = group.map((v) => {
+        const box = labels.get(pairKey(v, root));
+        return { v, box: box ?? null, pref: pref.get(v)! };
+      });
+      let bestTotal = Infinity;
+      let bestAssign: number[] = [];
+      const current: number[] = [];
+      const used = new Set<number>();
+      const spot = (slot: number) => ({ x: Math.cos(slot * step) * radius, y: Math.sin(slot * step) * radius });
+      const dfs = (i: number, total: number) => {
+        if (total >= bestTotal) return;
+        if (i === sets.length) {
+          bestTotal = total;
+          bestAssign = [...current];
+          return;
+        }
+        for (let slot = 0; slot < slots; slot++) {
+          if (used.has(slot)) continue;
+          const here = spot(slot);
+          let cost = Math.abs(wrapAngle(slot * step - sets[i].pref)) / step;
+          const box = sets[i].box;
+          if (box) {
+            if (labelHitsCard(here, { x: 0, y: 0 }, box)) cost += 1.5;
+            for (let j = 0; j < i; j++) {
+              const other = sets[j].box;
+              if (!other) continue;
+              const q = spot(current[j]);
+              if (Math.abs((here.x - q.x) / 2) < box.hw + other.hw - 6 && Math.abs((here.y - q.y) / 2) < box.hh + other.hh - 4) {
+                cost += 1.5;
+              }
+            }
+          }
+          used.add(slot);
+          current[i] = slot;
+          dfs(i + 1, total + cost);
+          used.delete(slot);
+        }
+      };
+      dfs(0, 0);
+      forced = new Map(group.map((v, i) => [v, bestAssign[i]]));
+    }
+
     const taken = new Set<number>();
     for (const v of group) {
       const neighborsPlaced = [...(neighbors.get(v) ?? [])].filter((n) => placed.has(n));
@@ -217,6 +285,7 @@ function placeRings(
       let bestCost = Infinity;
       for (let s = 0; s < slots; s++) {
         if (taken.has(s)) continue;
+        if (forced && forced.get(v) !== s) continue;
         const ang = s * step;
         const ux = Math.cos(ang) * radius;
         const uy = Math.sin(ang) * radius;
@@ -225,7 +294,10 @@ function placeRings(
           const box = labels.get(pairKey(v, n));
           if (!box) continue;
           const q = placed.get(n)!;
-          if (Math.abs(ux - q.x) / 2 < CARD_HALF_W + box.hw && Math.abs(uy - q.y) / 2 < CARD_HALF_H + box.hh) {
+          if (labelHitsCard({ x: ux, y: uy }, q, box)) cost += 1.5;
+          const lx = (ux + q.x) / 2;
+          const ly = (uy + q.y) / 2;
+          if (placedLabels.some((o) => Math.abs(lx - o.x) < o.hw + box.hw - 6 && Math.abs(ly - o.y) < o.hh + box.hh - 4)) {
             cost += 1.5;
           }
         }
@@ -237,7 +309,13 @@ function placeRings(
       taken.add(bestSlot);
       const ang = bestSlot * step;
       angleOf.set(v, ang);
-      placed.set(v, { x: Math.cos(ang) * radius, y: Math.sin(ang) * radius });
+      const here = { x: Math.cos(ang) * radius, y: Math.sin(ang) * radius };
+      for (const n of neighborsPlaced) {
+        const box = labels.get(pairKey(v, n));
+        const q = placed.get(n)!;
+        if (box) placedLabels.push({ x: (here.x + q.x) / 2, y: (here.y + q.y) / 2, hw: box.hw, hh: box.hh });
+      }
+      placed.set(v, here);
     }
   }
   return placed;
@@ -324,7 +402,11 @@ export function computeGalaxyLayout(
             moved.some((p) => segments.some(([a, b]) => distPointSeg(p, a, b) < EDGE_CLEARANCE)) ||
             ownEdges.some(([i, j]) => occupied.some((o) => distPointSeg(o, moved[i], moved[j]) < EDGE_CLEARANCE));
           if (onLine) continue;
-          const cost = 20 * nearest + Math.hypot(tx + cx - gx, ty + cy - gy);
+          const labelHits = ownEdges.filter(([i, j]) => {
+            const box = labels.get(pairKey(names[i], names[j]));
+            return box ? labelHitsCard(moved[i], moved[j], box) : false;
+          }).length;
+          const cost = 20 * nearest + Math.hypot(tx + cx - gx, ty + cy - gy) + labelHits * 1e5;
           if (cost < bestCost) {
             bestCost = cost;
             best = { shift: { x: tx, y: ty }, rot };
