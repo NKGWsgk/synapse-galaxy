@@ -16,3 +16,12 @@ export function getAwardPhase(now: Date = new Date()): AwardPhase {
   if (t >= new Date(LIKE_AWARD.announce.start).getTime()) return "announce";
   return "before";
 }
+
+/** ポップアップとお知らせページの見出し（今の段階に合わせて切り替える） */
+export const AWARD_EYEBROW: Record<AwardPhase, string> = {
+  before: "Coming Soon",
+  announce: "Coming Soon",
+  entry: "Open Campaign",
+  review: "Judging",
+  result: "Results",
+};

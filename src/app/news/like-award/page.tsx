@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { SITE_NAME_EN, SITE_NAME_JA } from "@/lib/siteMetadata";
-import { LIKE_AWARD, getAwardPhase } from "@/lib/campaign";
+import { AWARD_EYEBROW, LIKE_AWARD, getAwardPhase } from "@/lib/campaign";
 
 // 日程の進行（NOW 表示）が古くならないよう、1時間ごとに再生成する
 export const revalidate = 3600;
@@ -87,7 +87,7 @@ export default function LikeAwardNewsPage() {
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(255,255,255,0.08),transparent_70%)]" />
 
           <p className="relative mb-5 inline-flex rounded-[4px] border border-white/20 bg-white/10 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.26em] text-white/80">
-            Open Campaign
+            {AWARD_EYEBROW[phase]}
           </p>
 
           <h1 className="relative text-3xl font-extrabold leading-tight tracking-tight text-white sm:text-4xl">
