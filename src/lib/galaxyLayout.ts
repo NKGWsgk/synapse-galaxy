@@ -1,13 +1,14 @@
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { endpointWorkKey, type WorkEndpointMap } from "@/lib/workEndpoint";
 
-/** Distance between adjacent corners of the honeycomb grid (card centres sit on the corners). */
-const D = 300;
+/** Distance between adjacent corners of the honeycomb grid (card centres sit on the corners).
+ *  370 keeps a horizontal edge long enough for the widest label pill (220) between two cards. */
+const D = 370;
 const SQ3 = Math.sqrt(3);
 /** Lattice extent in cells per direction; generous for the current dataset. */
 const GRID_CELLS = 14;
-/** A node's card must stay at least this far (in D) from any other component's cards. */
-const ISLAND_MARGIN = 1.9;
+/** A card must stay at least this far (in D) from any other group's cards: one blank corner between groups. */
+const ISLAND_MARGIN = 1.75;
 
 type Pt = { x: number; y: number };
 type NeighborMap = Map<string, Set<string>>;
@@ -203,7 +204,7 @@ function placeComponent(
  * Honeycomb layout: works sit on the corners of a hexagonal grid (the hub on
  * one corner, others on the nearest free corners, empty corners stay blank).
  * Disconnected groups are laid out the same way and dropped onto the same grid,
- * spread evenly around the main group. Pure function — safe for Node and browser.
+ * packed as close to the main group as the margin allows. Pure function — safe for Node and browser.
  */
 export function computeGalaxyLayout(
   synapses: SynapseRow[],
@@ -238,23 +239,19 @@ export function computeGalaxyLayout(
     for (let j = -M; j <= M; j++) offsets.push({ x: 1.5 * D * j, y: SQ3 * D * i + (SQ3 * D * j) / 2 });
   }
 
-  islands.forEach((isl, k) => {
+  islands.forEach((isl) => {
     const pts = [...isl.local.values()];
     const ext = Math.max(...pts.map((p) => Math.hypot(p.x, p.y)));
     const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
     const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-    const theta = -Math.PI + ((k + 0.5) / islands.length) * 2 * Math.PI;
-    const ux = Math.cos(theta);
-    const uy = Math.sin(theta);
     const occupied = [...result.values()];
+    const gx = occupied.reduce((sum, o) => sum + o.x, 0) / occupied.length;
+    const gy = occupied.reduce((sum, o) => sum + o.y, 0) / occupied.length;
 
     let best: Pt | null = null;
     let bestCost = Infinity;
     for (const t of offsets) {
-      const qx = t.x + cx;
-      const qy = t.y + cy;
-      const along = qx * ux + qy * uy;
-      const cost = Math.hypot(qx, qy) + 2 * Math.abs(qx * uy - qy * ux) + (along < 0 ? 1e5 : 0);
+      const cost = Math.hypot(t.x + cx - gx, t.y + cy - gy);
       if (cost >= bestCost) continue;
       const clear = pts.every((p) =>
         occupied.every((o) => Math.hypot(p.x + t.x - o.x, p.y + t.y - o.y) >= ISLAND_MARGIN * D),
@@ -264,7 +261,7 @@ export function computeGalaxyLayout(
         best = t;
       }
     }
-    const t = best ?? { x: ux * (mainRadius + ext + 2 * D), y: uy * (mainRadius + ext + 2 * D) };
+    const t = best ?? { x: mainRadius + ext + 2 * D, y: 0 };
     for (const [n, p] of isl.local) result.set(n, { x: p.x + t.x, y: p.y + t.y });
   });
 
