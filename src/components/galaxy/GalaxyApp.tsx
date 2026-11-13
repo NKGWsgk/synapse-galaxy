@@ -1,10 +1,10 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { SynapseRow } from "@/lib/supabase/clients";
-import { AuthFeedbackProvider } from "./AuthFeedback";
+import { AuthFeedbackProvider, useAuthFeedback } from "./AuthFeedback";
 import { GraphView } from "./GraphView";
 import { ScrollFeedView } from "./ScrollFeedView";
 import { Header } from "./Header";
@@ -71,12 +71,12 @@ function loadViewCount(): number {
 function saveViewCount(n: number) {
   try { localStorage.setItem(STORAGE_KEY, String(n)); } catch { /* noop */ }
 }
-function loadMobileViewMode(): ViewMode {
+function loadViewMode(isDesktop: boolean): ViewMode {
   try {
     const v = localStorage.getItem(MOBILE_VIEW_KEY);
     if (v === "feed" || v === "map") return v;
-    return "feed"; // モバイルは feed をデフォルトにしてチラつきを低減
-  } catch { return "feed"; }
+  } catch { /* noop */ }
+  return isDesktop ? "map" : "feed";
 }
 function saveMobileViewMode(mode: ViewMode) {
   try { localStorage.setItem(MOBILE_VIEW_KEY, mode); } catch { /* noop */ }
@@ -199,6 +199,15 @@ function ViewGate({
 }
 
 export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }) {
+  return (
+    <AuthFeedbackProvider>
+      <GalaxyAppInner googleClientId={googleClientId} />
+    </AuthFeedbackProvider>
+  );
+}
+
+function GalaxyAppInner({ googleClientId }: { googleClientId?: string | null }) {
+  const { showToast } = useAuthFeedback();
   const [synapses, setSynapses] = useState<SynapseRow[]>([]);
   const [workEndpoints, setWorkEndpoints] = useState<WorkEndpointMap>({ [STATIC_HUB_URL]: STATIC_HUB_ENTRY });
   const [synapsesLoaded, setSynapsesLoaded] = useState(false);
@@ -212,13 +221,18 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileViewMode, setMobileViewMode] = useState<ViewMode>("feed");
   const [isMdUp, setIsMdUp] = useState(false);
+  const [viewReady, setViewReady] = useState(false);
   const [synapseShareRequest, setSynapseShareRequest] = useState<{ id: string; nonce: number } | null>(null);
   const shareSlugFetchStartedRef = useRef<Set<string>>(new Set());
 
-  useEffect(() => {
+  // Decide desktop/mobile and the view mode before the first paint so the
+  // wrong view (e.g. the feed on desktop) never flashes.
+  useLayoutEffect(() => {
     const mq = window.matchMedia("(min-width: 768px)");
+    setIsMdUp(mq.matches);
+    setMobileViewMode(loadViewMode(mq.matches));
+    setViewReady(true);
     const sync = () => setIsMdUp(mq.matches);
-    sync();
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, []);
@@ -271,8 +285,10 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
       } else {
         setFocusUrl((prev) => prev ?? pickInitialFocusUrl(list));
       }
+      return list;
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
+      return null;
     } finally {
       setSynapsesLoaded(true);
     }
@@ -289,7 +305,6 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { setViewCount(loadViewCount()); }, []);
-  useEffect(() => { setMobileViewMode(loadMobileViewMode()); }, []);
 
   const setViewMode = useCallback((next: ViewMode) => {
     setMobileViewMode(next);
@@ -355,9 +370,14 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
         window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
       } catch { /* noop */ }
     }
-    void refresh();
+    void refresh().then((list) => {
+      const newest = list?.[0];
+      if (list && newest && !filterMapSynapses(list).some((s) => s.id === newest.id)) {
+        showToast("このシナプスはまだマップに表示されません。2本以上のシナプスがつながると表示されます（フィードには表示済み）");
+      }
+    });
     if (user) setUserPostCount((prev) => prev + 1);
-  }, [refresh, user, workEndpoints]);
+  }, [refresh, user, workEndpoints, showToast]);
 
   /** マップ表示用フィルタ済みシナプス: 両端が MAP_MIN_CONNECTIONS 以上の接続を持つもののみ */
   const graphSynapses = useMemo(() => filterMapSynapses(synapses), [synapses]);
@@ -420,7 +440,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   }, [synapsesLoaded, workEndpoints]);
 
   return (
-    <AuthFeedbackProvider>
+    <>
       <div className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-zinc-50 text-zinc-900 md:flex-row">
         {/* モバイルトップバー */}
         <header className="relative flex shrink-0 items-center border-b border-zinc-200/80 bg-white/95 px-3 py-2.5 backdrop-blur-sm md:hidden">
@@ -468,7 +488,11 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
           <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,rgba(99,102,241,0.05),transparent_60%)]" />
           <CampaignPopup />
           <AnimatePresence mode="wait">
-            {focusUrl ? (
+            {!viewReady ? (
+              <div key="loading" className="h-full w-full">
+                <GalaxyLoadingShell />
+              </div>
+            ) : focusUrl ? (
               <div key="graph" className="h-full w-full">
                 <div className={mobileViewMode === "feed" ? "h-full" : "hidden"}>
                   <ScrollFeedView
@@ -547,6 +571,6 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
         </AnimatePresence>
         </div>
       </div>
-    </AuthFeedbackProvider>
+    </>
   );
 }

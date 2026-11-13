@@ -18,6 +18,7 @@ import {
 } from "@/lib/contentPlatform";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
+import { computeGalaxyLayout } from "@/lib/galaxyLayout";
 import {
   endpointDisplayUrl,
   endpointWorkKey,
@@ -1606,26 +1607,25 @@ export function GraphView({
       return;
     }
 
-    // Fast path: use server-cached layout when all nodes are covered.
-    // initialLayout arrives in the same state batch as synapses (bundled in
-    // /api/synapses response), so this fires before camera/reveal effects.
-    if (initialLayout && initialLayout.size > 0) {
-      const allCovered = worldNodes.every((n) => initialLayout.has(n.norm));
-      if (allCovered) {
-        const newPositions = new Map<string, { x: number; y: number }>();
-        for (const n of worldNodes) {
-          const pos = initialLayout.get(n.norm)!;
-          n.x = pos.x; n.y = pos.y; n.fx = pos.x; n.fy = pos.y;
-          newPositions.set(n.norm, pos);
-        }
-        worldPositionsRef.current = newPositions;
-        simNodesRef.current = worldNodes;
-        simLinksRef.current = worldLinks;
-        simRef.current = null;
-        usedFastPathRef.current = true;
-        setTick((t) => (t + 1) % 1000000);
-        return;
+    // Fast path: honeycomb layout from the server cache when it covers every
+    // node (it arrives in the same state batch as synapses, so this fires before
+    // the camera/reveal effects); otherwise compute the same layout right here.
+    const cacheCovers = !!initialLayout && worldNodes.every((n) => initialLayout.has(n.norm));
+    const layout = cacheCovers ? initialLayout! : computeGalaxyLayout(synapses, workMap);
+    if (worldNodes.every((n) => layout.has(n.norm))) {
+      const newPositions = new Map<string, { x: number; y: number }>();
+      for (const n of worldNodes) {
+        const pos = layout.get(n.norm)!;
+        n.x = pos.x; n.y = pos.y; n.fx = pos.x; n.fy = pos.y;
+        newPositions.set(n.norm, pos);
       }
+      worldPositionsRef.current = newPositions;
+      simNodesRef.current = worldNodes;
+      simLinksRef.current = worldLinks;
+      simRef.current = null;
+      usedFastPathRef.current = true;
+      setTick((t) => (t + 1) % 1000000);
+      return;
     }
 
     const mainWorldNodes = worldNodes.filter((n) => mainNormSet.has(n.norm));
