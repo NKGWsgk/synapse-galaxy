@@ -706,6 +706,15 @@ function snapComponentToRings(
       return { norm, prefAngle, placedNeighborCount: placedAngles.length };
     });
 
+    if (withAngle.length > 1) {
+      const first = withAngle[0].prefAngle;
+      if (withAngle.every((wa) => wa.prefAngle === first)) {
+        const sorted = [...withAngle].sort((a, b) => a.norm.localeCompare(b.norm));
+        const step = (2 * Math.PI) / withAngle.length;
+        sorted.forEach((wa, i) => { wa.prefAngle = i * step - Math.PI; });
+      }
+    }
+
     withAngle.sort((a, b) => {
       if (a.placedNeighborCount !== b.placedNeighborCount) {
         return b.placedNeighborCount - a.placedNeighborCount;

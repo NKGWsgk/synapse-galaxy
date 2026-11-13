@@ -633,6 +633,16 @@ export function computeGalaxyLayout(
       return { node: n, prefAngle, placedNeighborCount: placedAngles.length };
     });
 
+    // Ring-1: hub at (0,0) → atan2(0,0)=0 for every node; spread them evenly instead.
+    if (withAngle.length > 1) {
+      const first = withAngle[0].prefAngle;
+      if (withAngle.every((wa) => wa.prefAngle === first)) {
+        const sorted = [...withAngle].sort((a, b) => a.node.norm.localeCompare(b.node.norm));
+        const step = (2 * Math.PI) / withAngle.length;
+        sorted.forEach((wa, i) => { wa.prefAngle = i * step - Math.PI; });
+      }
+    }
+
     withAngle.sort((a, b) => {
       if (a.placedNeighborCount !== b.placedNeighborCount) return b.placedNeighborCount - a.placedNeighborCount;
       if (a.prefAngle !== b.prefAngle) return a.prefAngle - b.prefAngle;
