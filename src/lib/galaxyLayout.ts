@@ -7,8 +7,10 @@ const D = 320;
 /** Card half extents incl. padding, matching the label-overlap test in GraphView. */
 const CARD_HALF_W = 76;
 const CARD_HALF_H = 61;
-/** A card must stay at least this far (in D) from any other group's cards. */
-const ISLAND_MARGIN = 1.7;
+/** A card must stay at least this far (in D) from any other group's cards: the next slot over. */
+const ISLAND_MARGIN = 1.05;
+/** ...and at least this far (px) from any other group's edges, so no card sits on a line. */
+const EDGE_CLEARANCE = 100;
 
 type Pt = { x: number; y: number };
 type NeighborMap = Map<string, Set<string>>;
@@ -99,6 +101,14 @@ function pickRoot(
     if (degN > degB || (degN === degB && likesN > likesB)) best = n;
   }
   return best;
+}
+
+function distPointSeg(p: Pt, a: Pt, b: Pt): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
 const wrapAngle = (a: number) => {
@@ -270,6 +280,14 @@ export function computeGalaxyLayout(
 
   for (const isl of islands) {
     const occupied = [...result.values()];
+    const segments: Array<[Pt, Pt]> = [];
+    for (const [a, pa] of result) {
+      for (const b of neighbors.get(a) ?? []) {
+        const pb = result.get(b);
+        if (pb && a < b) segments.push([pa, pb]);
+      }
+    }
+    const names = [...isl.local.keys()];
     const gx = occupied.reduce((sum, o) => sum + o.x, 0) / occupied.length;
     const gy = occupied.reduce((sum, o) => sum + o.y, 0) / occupied.length;
     let reach = 0;
@@ -282,6 +300,13 @@ export function computeGalaxyLayout(
       const c = Math.cos(rot);
       const sn = Math.sin(rot);
       const pts = [...isl.local.values()].map((p) => ({ x: p.x * c - p.y * sn, y: p.x * sn + p.y * c }));
+      const ownEdges: Array<[number, number]> = [];
+      names.forEach((a, i) => {
+        for (const b of neighbors.get(a) ?? []) {
+          const j = names.indexOf(b);
+          if (j > i) ownEdges.push([i, j]);
+        }
+      });
       const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
       const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
       for (let d = 0; d < directions; d++) {
@@ -294,6 +319,11 @@ export function computeGalaxyLayout(
             for (const o of occupied) nearest = Math.min(nearest, Math.hypot(p.x + tx - o.x, p.y + ty - o.y));
           }
           if (nearest < margin) continue;
+          const moved = pts.map((p) => ({ x: p.x + tx, y: p.y + ty }));
+          const onLine =
+            moved.some((p) => segments.some(([a, b]) => distPointSeg(p, a, b) < EDGE_CLEARANCE)) ||
+            ownEdges.some(([i, j]) => occupied.some((o) => distPointSeg(o, moved[i], moved[j]) < EDGE_CLEARANCE));
+          if (onLine) continue;
           const cost = 20 * nearest + Math.hypot(tx + cx - gx, ty + cy - gy);
           if (cost < bestCost) {
             bestCost = cost;
