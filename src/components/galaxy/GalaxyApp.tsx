@@ -35,6 +35,17 @@ function mostConnectedUrl(synapses: SynapseRow[]): string | null {
 
 /** サンプルでは『プロジェクト・ヘイル・メアリー』をハブにしているため、存在すれば初期フォーカスに優先 */
 const SAMPLE_HUB_ASIN = "4152100702";
+/** ランディング作品のメタデータをハードコードして API fetch 完了前に即時描画する */
+const STATIC_HUB_URL = "https://www.amazon.co.jp/dp/4152100702";
+const STATIC_HUB_ENTRY = {
+  workId: "fbe07372-4216-4140-b11e-f59c7904f448",
+  representativeUrl: STATIC_HUB_URL,
+  title: "プロジェクト・ヘイル・メアリー",
+  description: null,
+  shareSlug: "project-hail-mary",
+  imageUrl: "https://m.media-amazon.com/images/I/61KNqlUzmIL._SL1500_.jpg",
+  siteName: null,
+} satisfies import("@/lib/workResolve").WorkEndpointInfo;
 
 function pickInitialFocusUrl(synapses: SynapseRow[]): string | null {
   for (const s of synapses) {
@@ -50,7 +61,7 @@ const GATE_LOGGED = 30;
 const GATE_POST_COUNT = 5;
 
 /** マップ（銀河グラフ）への表示閾値: 作品がこの数以上のシナプスに登場して初めてノード化する */
-const MAP_MIN_CONNECTIONS = 1;
+const MAP_MIN_CONNECTIONS = 2;
 const STORAGE_KEY = "sgViewCount";
 const MOBILE_VIEW_KEY = "sgMobileView";
 
@@ -190,11 +201,11 @@ function ViewGate({
 
 export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }) {
   const [synapses, setSynapses] = useState<SynapseRow[]>([]);
-  const [workEndpoints, setWorkEndpoints] = useState<WorkEndpointMap>({});
+  const [workEndpoints, setWorkEndpoints] = useState<WorkEndpointMap>({ [STATIC_HUB_URL]: STATIC_HUB_ENTRY });
   const [synapsesLoaded, setSynapsesLoaded] = useState(false);
   const [initialLayout, setInitialLayout] = useState<Map<string, { x: number; y: number }> | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [focusUrl, setFocusUrl] = useState<string | null>(null);
+  const [focusUrl, setFocusUrl] = useState<string | null>(STATIC_HUB_URL);
   const [user, setUser] = useState<User | null>(null);
   const [viewCount, setViewCount] = useState(0);
   const [userPostCount, setUserPostCount] = useState(0);
@@ -474,11 +485,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
           <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,rgba(99,102,241,0.05),transparent_60%)]" />
           <CampaignPopup />
           <AnimatePresence mode="wait">
-            {!synapsesLoaded ? (
-              <div key="loading" className="h-full w-full">
-                <GalaxyLoadingShell />
-              </div>
-            ) : focusUrl ? (
+            {focusUrl ? (
               <div key="graph" className="h-full w-full">
                 <div className={mobileViewMode === "feed" ? "h-full" : "hidden"}>
                   <ScrollFeedView
