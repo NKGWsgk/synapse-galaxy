@@ -248,27 +248,37 @@ function computeMobileInitialLandingPan(
   return { x: -cx * zoom, y: -cy * zoom };
 }
 
-/** PC 初回／?focus= リロード: フォーカス＋1-hop 近傍を画面に収める倍率（最小領域付き）。 */
+/**
+ * PC 初回／?focus= リロード: フォーカスを中心に、1-hop の作品と
+ * 「その先の作品とのキーワード（吹き出し）」までが画面に収まる倍率（最小領域付き）。
+ */
 function computeDesktopNeighborhoodFit(
   hubPos: { x: number; y: number },
   oneHopPositions: Array<{ x: number; y: number }>,
+  nextHopLabelPositions: Array<{ x: number; y: number }>,
   viewportW: number,
   viewportH: number,
 ): { zoom: number; pan: { x: number; y: number } } {
   const hx = CARD_W / 2;
   const hy = CARD_H / 2;
   const PAD = graphViewportFitPadding(viewportW);
-  const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
-  expandBBoxWithCard(hubPos.x, hubPos.y, hx, hy, bbox);
-  for (const p of oneHopPositions) expandBBoxWithCard(p.x, p.y, hx, hy, bbox);
-  const bboxW = Math.max(DESKTOP_FIT_MIN_BBOX_W, bbox.maxX - bbox.minX);
-  const bboxH = Math.max(DESKTOP_FIT_MIN_BBOX_H, bbox.maxY - bbox.minY);
+  const pillHx = EDGE_LABEL_MAX_W / 2 + 4;
+  const pillHy = 30;
+  let reachX = hx;
+  let reachY = hy;
+  for (const p of oneHopPositions) {
+    reachX = Math.max(reachX, Math.abs(p.x - hubPos.x) + hx);
+    reachY = Math.max(reachY, Math.abs(p.y - hubPos.y) + hy);
+  }
+  for (const p of nextHopLabelPositions) {
+    reachX = Math.max(reachX, Math.abs(p.x - hubPos.x) + pillHx);
+    reachY = Math.max(reachY, Math.abs(p.y - hubPos.y) + pillHy);
+  }
+  const bboxW = Math.max(DESKTOP_FIT_MIN_BBOX_W, 2 * reachX);
+  const bboxH = Math.max(DESKTOP_FIT_MIN_BBOX_H, 2 * reachY);
   const zX = (viewportW - PAD * 2) / bboxW;
   const zY = (viewportH - PAD * 2) / bboxH;
-  const zoom = Math.max(
-    ZOOM_MIN,
-    Math.min(ZOOM_MAX, Math.min(zX, zY) * graphViewportFitZoomMultiplier(viewportW)),
-  );
+  const zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(zX, zY)));
   return { zoom, pan: { x: -hubPos.x * zoom, y: -hubPos.y * zoom } };
 }
 
@@ -2055,9 +2065,22 @@ export function GraphView({
           const p = worldPos.get(n.norm);
           if (p) oneHopPositions.push(p);
         }
+        const hubNorm = builtNodes.find((n) => n.isHub)?.norm;
+        const oneHopNorms = new Set(builtNodes.filter((n) => !n.isHub && n.hop === 1).map((n) => n.norm));
+        const nextHopLabelPositions: Array<{ x: number; y: number }> = [];
+        for (const l of simLinksRef.current) {
+          const sN = typeof l.source === "string" ? l.source : l.source.norm;
+          const tN = typeof l.target === "string" ? l.target : l.target.norm;
+          const [near, far] = oneHopNorms.has(sN) ? [sN, tN] : oneHopNorms.has(tN) ? [tN, sN] : [null, null];
+          if (!near || !far || far === hubNorm || oneHopNorms.has(far)) continue;
+          const a = worldPos.get(near);
+          const b = worldPos.get(far);
+          if (a && b) nextHopLabelPositions.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+        }
         const fit = computeDesktopNeighborhoodFit(
           hubPos,
           oneHopPositions,
+          nextHopLabelPositions,
           viewport.w,
           viewport.h,
         );

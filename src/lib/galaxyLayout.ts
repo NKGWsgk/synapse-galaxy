@@ -8,7 +8,7 @@ const SQ3 = Math.sqrt(3);
 /** Lattice extent in cells per direction; generous for the current dataset. */
 const GRID_CELLS = 14;
 /** A card must stay at least this far (in D) from any other group's cards: one blank corner between groups. */
-const ISLAND_MARGIN = 1.75;
+const ISLAND_MARGIN = 1.7;
 
 type Pt = { x: number; y: number };
 type NeighborMap = Map<string, Set<string>>;
@@ -176,7 +176,7 @@ function placeComponent(
         for (const a of anchors) {
           for (const [, q] of placed) {
             if (q === a) continue;
-            if (distPointSeg(q, u, a) < 0.55 * D) cost += 50;
+            if (distPointSeg(q, u, a) < 0.3 * D) cost += 50;
           }
           for (const [e1, e2] of edges) {
             if (e1 === a || e2 === a) continue;
@@ -184,7 +184,7 @@ function placeComponent(
           }
         }
         for (const [e1, e2] of edges) {
-          if (distPointSeg(u, e1, e2) < 0.55 * D) cost += 50;
+          if (distPointSeg(u, e1, e2) < 0.3 * D) cost += 50;
         }
         if (cost < bestCost) {
           bestCost = cost;
@@ -239,30 +239,49 @@ export function computeGalaxyLayout(
     for (let j = -M; j <= M; j++) offsets.push({ x: 1.5 * D * j, y: SQ3 * D * i + (SQ3 * D * j) / 2 });
   }
 
+  // Rotations by 120 degrees and a mirror keep a corner-rooted group on the grid.
+  const orientations: Array<(p: Pt) => Pt> = [];
+  for (let r = 0; r < 3; r++) {
+    for (const mirror of [false, true]) {
+      const c = Math.cos((r * 2 * Math.PI) / 3);
+      const sn = Math.sin((r * 2 * Math.PI) / 3);
+      orientations.push((p) => {
+        const y = mirror ? -p.y : p.y;
+        return { x: p.x * c - y * sn, y: p.x * sn + y * c };
+      });
+    }
+  }
+
   islands.forEach((isl) => {
-    const pts = [...isl.local.values()];
-    const ext = Math.max(...pts.map((p) => Math.hypot(p.x, p.y)));
-    const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-    const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
     const occupied = [...result.values()];
     const gx = occupied.reduce((sum, o) => sum + o.x, 0) / occupied.length;
     const gy = occupied.reduce((sum, o) => sum + o.y, 0) / occupied.length;
 
-    let best: Pt | null = null;
+    let best: { shift: Pt; orient: (p: Pt) => Pt } | null = null;
     let bestCost = Infinity;
-    for (const t of offsets) {
-      const cost = Math.hypot(t.x + cx - gx, t.y + cy - gy);
-      if (cost >= bestCost) continue;
-      const clear = pts.every((p) =>
-        occupied.every((o) => Math.hypot(p.x + t.x - o.x, p.y + t.y - o.y) >= ISLAND_MARGIN * D),
-      );
-      if (clear) {
-        bestCost = cost;
-        best = t;
+    for (const orient of orientations) {
+      const pts = [...isl.local.values()].map(orient);
+      const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
+      const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
+      for (const t of offsets) {
+        let nearest = Infinity;
+        for (const p of pts) {
+          for (const o of occupied) nearest = Math.min(nearest, Math.hypot(p.x + t.x - o.x, p.y + t.y - o.y));
+        }
+        if (nearest < ISLAND_MARGIN * D) continue;
+        // Closest approach to the existing cards dominates; the centroid only breaks ties.
+        const cost = 20 * nearest + Math.hypot(t.x + cx - gx, t.y + cy - gy);
+        if (cost < bestCost) {
+          bestCost = cost;
+          best = { shift: t, orient };
+        }
       }
     }
-    const t = best ?? { x: mainRadius + ext + 2 * D, y: 0 };
-    for (const [n, p] of isl.local) result.set(n, { x: p.x + t.x, y: p.y + t.y });
+    const chosen = best ?? { shift: { x: mainRadius + 2 * D * isl.nodes.length, y: 0 }, orient: orientations[0] };
+    for (const [n, p] of isl.local) {
+      const q = chosen.orient(p);
+      result.set(n, { x: q.x + chosen.shift.x, y: q.y + chosen.shift.y });
+    }
   });
 
   return new Map([...result.entries()].map(([n, p]) => [n, { x: p.x, y: p.y }]));
