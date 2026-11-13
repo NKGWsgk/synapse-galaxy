@@ -772,7 +772,7 @@ function snapComponentToRings(
           for (const nb of ns) {
             if (!componentSet.has(nb)) continue;
             const p = snappedById.get(nb);
-            if (p) placedAngles.push(Math.atan2(p.y, p.x));
+            if (p && (p.x !== 0 || p.y !== 0)) placedAngles.push(Math.atan2(p.y, p.x));
           }
         }
         let sx = 0;
@@ -781,7 +781,9 @@ function snapComponentToRings(
           sx += Math.cos(a);
           sy += Math.sin(a);
         }
-        const angle = placedAngles.length > 0 ? Math.atan2(sy, sx) : 0;
+        const cur = snappedById.get(norm);
+        const keep = cur ? Math.atan2(cur.y, cur.x) : 0;
+        const angle = placedAngles.length > 0 ? Math.atan2(sy, sx) : keep;
         return { norm, prefAngle: angle };
       });
       newPrefs.sort((a, b) => a.norm.localeCompare(b.norm));
@@ -1856,12 +1858,14 @@ export function GraphView({
           if (ns) {
             for (const nb of ns) {
               const p = snappedById.get(nb);
-              if (p) placedAngles.push(Math.atan2(p.y, p.x));
+              if (p && (p.x !== 0 || p.y !== 0)) placedAngles.push(Math.atan2(p.y, p.x));
             }
           }
           let sx = 0, sy = 0;
           for (const a of placedAngles) { sx += Math.cos(a); sy += Math.sin(a); }
-          const angle = placedAngles.length > 0 ? Math.atan2(sy, sx) : 0;
+          const cur = snappedById.get(n.norm);
+          const keep = cur ? Math.atan2(cur.y, cur.x) : 0;
+          const angle = placedAngles.length > 0 ? Math.atan2(sy, sx) : keep;
           return { node: n, prefAngle: angle };
         });
         // Re-assign slots greedily. Sort by (norm) for determinism.

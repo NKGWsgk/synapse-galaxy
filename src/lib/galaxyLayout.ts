@@ -343,12 +343,14 @@ function snapComponentToRings(
           for (const nb of ns) {
             if (!componentSet.has(nb)) continue;
             const p = snappedById.get(nb);
-            if (p) placedAngles.push(Math.atan2(p.y, p.x));
+            if (p && (p.x !== 0 || p.y !== 0)) placedAngles.push(Math.atan2(p.y, p.x));
           }
         }
         let sx = 0, sy = 0;
         for (const a of placedAngles) { sx += Math.cos(a); sy += Math.sin(a); }
-        return { norm, prefAngle: placedAngles.length > 0 ? Math.atan2(sy, sx) : 0 };
+        const cur = snappedById.get(norm);
+        const keep = cur ? Math.atan2(cur.y, cur.x) : 0;
+        return { norm, prefAngle: placedAngles.length > 0 ? Math.atan2(sy, sx) : keep };
       });
       newPrefs.sort((a, b) => a.norm.localeCompare(b.norm));
       const takenSlots = new Set<number>();
@@ -688,12 +690,14 @@ export function computeGalaxyLayout(
         if (ns) {
           for (const nb of ns) {
             const p = snappedById.get(nb);
-            if (p) placedAngles.push(Math.atan2(p.y, p.x));
+            if (p && (p.x !== 0 || p.y !== 0)) placedAngles.push(Math.atan2(p.y, p.x));
           }
         }
         let sx = 0, sy = 0;
         for (const a of placedAngles) { sx += Math.cos(a); sy += Math.sin(a); }
-        return { node: n, prefAngle: placedAngles.length > 0 ? Math.atan2(sy, sx) : 0 };
+        const cur = snappedById.get(n.norm);
+        const keep = cur ? Math.atan2(cur.y, cur.x) : 0;
+        return { node: n, prefAngle: placedAngles.length > 0 ? Math.atan2(sy, sx) : keep };
       });
       newPrefs.sort((a, b) => a.node.norm.localeCompare(b.node.norm));
       const takenSlots = new Set<number>();
