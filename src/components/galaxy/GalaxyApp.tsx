@@ -17,6 +17,7 @@ import { decodeFocusParam, syncFocusParamInSearchParams } from "@/lib/focusShare
 import { isAcceptableShareSlug } from "@/lib/workShareSlug";
 import { readSynapseIdFromLocation, writeSynapseIdToUrl } from "@/lib/synapseShareUrl";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
+import { filterMapSynapses } from "@/lib/mapFilter";
 import type { WorkEndpointMap } from "@/lib/workResolve";
 import { CampaignPopup } from "./CampaignPopup";
 
@@ -60,8 +61,6 @@ const GATE_UNLOGGED = 8;
 const GATE_LOGGED = 30;
 const GATE_POST_COUNT = 5;
 
-/** マップ（銀河グラフ）への表示閾値: 作品がこの数以上のシナプスに登場して初めてノード化する */
-const MAP_MIN_CONNECTIONS = 2;
 const STORAGE_KEY = "sgViewCount";
 const MOBILE_VIEW_KEY = "sgMobileView";
 
@@ -361,23 +360,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
   }, [refresh, user, workEndpoints]);
 
   /** マップ表示用フィルタ済みシナプス: 両端が MAP_MIN_CONNECTIONS 以上の接続を持つもののみ */
-  const graphSynapses = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const s of synapses) {
-      const src = normalizeSynapseEndpoint(s.source_url);
-      const tgt = normalizeSynapseEndpoint(s.target_url);
-      counts.set(src, (counts.get(src) ?? 0) + 1);
-      counts.set(tgt, (counts.get(tgt) ?? 0) + 1);
-    }
-    return synapses.filter((s) => {
-      const src = normalizeSynapseEndpoint(s.source_url);
-      const tgt = normalizeSynapseEndpoint(s.target_url);
-      return (
-        (counts.get(src) ?? 0) >= MAP_MIN_CONNECTIONS &&
-        (counts.get(tgt) ?? 0) >= MAP_MIN_CONNECTIONS
-      );
-    });
-  }, [synapses]);
+  const graphSynapses = useMemo(() => filterMapSynapses(synapses), [synapses]);
 
   const feedViewActive = mobileViewMode === "feed";
 

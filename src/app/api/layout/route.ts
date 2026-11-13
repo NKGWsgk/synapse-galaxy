@@ -3,6 +3,7 @@ import { createAnonClient, createServiceClient } from "@/lib/supabase/clients";
 import { buildWorkEndpointMap } from "@/lib/workResolve";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { computeGalaxyLayout } from "@/lib/galaxyLayout";
+import { filterMapSynapses } from "@/lib/mapFilter";
 
 const PAGE_SIZE = 1000;
 
@@ -65,7 +66,7 @@ export async function POST() {
     const workMap = await buildWorkEndpointMap(supabase, endpointUrls);
 
     // Cast rows to SynapseRow-compatible shape
-    const synapses = all as Parameters<typeof computeGalaxyLayout>[0];
+    const synapses = filterMapSynapses(all as Parameters<typeof computeGalaxyLayout>[0]);
 
     const posMap = computeGalaxyLayout(synapses, workMap);
     const positions = Array.from(posMap.entries()).map(([norm, { x, y }]) => ({ norm, x, y }));
