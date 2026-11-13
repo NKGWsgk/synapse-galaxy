@@ -1,11 +1,15 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { SITE_NAME_EN, SITE_NAME_JA } from "@/lib/siteMetadata";
+import { LIKE_AWARD, getAwardPhase } from "@/lib/campaign";
+
+// 日程の進行（NOW 表示）が古くならないよう、1時間ごとに再生成する
+export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: "「いいね！」アワード",
   description:
-    "SYNAPSE Galaxy「いいね！」アワード開催中。11月11日〜25日の期間に「接続レビュー」を投稿して、いいね数を競おう。上位3名にAmazonギフトカードをプレゼント！",
+    "SYNAPSE Galaxy「いいね！」アワード。12月11日〜25日の期間に「接続レビュー」を投稿して、いいね数を競おう。上位3名にAmazonギフトカードをプレゼント！",
   alternates: {
     canonical: "/news/like-award",
   },
@@ -34,32 +38,33 @@ const rules = [
 
 const scheduleItems = [
   {
+    key: "announce",
     phase: "告知・準備期間",
-    date: "11月1日〜11月10日",
+    date: LIKE_AWARD.announce.label,
     body: "キャンペーン告知期間です。Googleアカウントでログインしてシナプス投稿の準備をしましょう。",
-    active: false,
   },
   {
+    key: "entry",
     phase: "レビューエントリー期間",
-    date: "11月11日〜25日",
+    date: LIKE_AWARD.entry.label,
     body: "期間中にサイト内で投稿されたシナプス（接続レビュー）が、すべて自動的にランキング対象となります。期間中であれば何件でも投稿できます。",
-    active: true,
   },
   {
+    key: "review",
     phase: "いいね集計・審査期間",
-    date: "11月25日〜12月1日",
+    date: LIKE_AWARD.review.label,
     body: "新規エントリー受付がストップし、公開されたレビューへの「いいね」集計に特化する期間です。運営にてアクセスログの確認およびレビュー内容の品質審査を行います。",
-    active: false,
   },
   {
+    key: "result",
     phase: "受賞者発表・ギフトカード送付",
-    date: "12月3日ごろ",
+    date: LIKE_AWARD.result.label,
     body: "サイト上にて上位3名を発表します。該当者の登録メールアドレス宛にAmazonギフトカードのデジタルコードを送付いたします。",
-    active: false,
   },
-];
+] as const;
 
 export default function LikeAwardNewsPage() {
+  const phase = getAwardPhase();
   return (
     <div className="min-h-screen bg-white text-[#0D0D1C]">
       {/* Header */}
@@ -108,7 +113,7 @@ export default function LikeAwardNewsPage() {
               エントリーして投稿する →
             </Link>
             <p className="text-xs text-white/50">
-              期間中（11月11日〜25日）に投稿すれば自動エントリー！
+              期間中（{LIKE_AWARD.entry.label}）に投稿すれば自動エントリー！
             </p>
           </div>
         </div>
@@ -141,29 +146,31 @@ export default function LikeAwardNewsPage() {
               <div className="absolute left-[9px] top-3 bottom-3 w-px bg-[#1A1B50]/20" />
 
               <div className="space-y-6">
-                {scheduleItems.map((item) => (
+                {scheduleItems.map((item) => {
+                  const active = item.key === phase;
+                  return (
                   <div key={item.phase} className="relative">
                     {/* dot */}
                     <div
                       className={`absolute -left-6 top-1.5 h-[18px] w-[18px] rounded-full border-2 ${
-                        item.active
+                        active
                           ? "border-[#1A1B50] bg-[#1A1B50] shadow-[0_0_8px_rgba(26,27,80,0.4)]"
                           : "border-zinc-300 bg-zinc-100"
                       }`}
                     />
                     <div
                       className={`rounded-[4px] border px-5 py-4 ${
-                        item.active
+                        active
                           ? "border-[#1A1B50]/20 bg-[#1A1B50]/5"
                           : "border-zinc-200 bg-zinc-50"
                       }`}
                     >
-                      <p className={`text-xs font-semibold ${item.active ? "text-[#1A1B50]" : "text-zinc-500"}`}>
+                      <p className={`text-xs font-semibold ${active ? "text-[#1A1B50]" : "text-zinc-500"}`}>
                         {item.date}
                       </p>
-                      <h3 className={`mt-0.5 font-bold ${item.active ? "text-[#0D0D1C]" : "text-zinc-600"}`}>
+                      <h3 className={`mt-0.5 font-bold ${active ? "text-[#0D0D1C]" : "text-zinc-600"}`}>
                         {item.phase}
-                        {item.active && (
+                        {active && (
                           <span className="ml-2 inline-flex rounded-[4px] bg-[#1A1B50]/10 px-2 py-0.5 text-[10px] font-semibold text-[#1A1B50]">
                             NOW
                           </span>
@@ -172,7 +179,8 @@ export default function LikeAwardNewsPage() {
                       <p className="mt-1.5 text-sm leading-7 text-zinc-500">{item.body}</p>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </section>
@@ -194,7 +202,7 @@ export default function LikeAwardNewsPage() {
           <div className="rounded-[4px] border border-[#1A1B50]/12 bg-[#F8F8FB] px-6 py-10 text-center">
             <p className="text-base font-semibold text-[#0D0D1C]">参加方法はカンタン！</p>
             <p className="mt-1 text-sm text-zinc-500">
-              Googleアカウントでログインして、11月11日〜25日の間にシナプスを投稿するだけ。
+              Googleアカウントでログインして、{LIKE_AWARD.entry.label}の間にシナプスを投稿するだけ。
             </p>
             <div className="mt-6 flex flex-col items-center gap-2">
               <Link
@@ -204,7 +212,7 @@ export default function LikeAwardNewsPage() {
                 エントリーして投稿する →
               </Link>
               <p className="text-xs text-zinc-500">
-                期間中（11月11日〜25日）に投稿すれば自動エントリー！
+                期間中（{LIKE_AWARD.entry.label}）に投稿すれば自動エントリー！
               </p>
             </div>
           </div>

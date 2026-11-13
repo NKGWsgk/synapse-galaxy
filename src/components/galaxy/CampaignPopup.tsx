@@ -2,8 +2,18 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { LIKE_AWARD, getAwardPhase, type AwardPhase } from "@/lib/campaign";
 
-const DISMISS_KEY = "campaign-award-2026-dismissed";
+// 日程を組み直したので、前回の「閉じた」記録は引き継がない
+const DISMISS_KEY = "campaign-award-2026-12-dismissed";
+
+const EYEBROW: Record<AwardPhase, string> = {
+  before: "Coming Soon",
+  announce: "Coming Soon",
+  entry: "Open Campaign",
+  review: "Judging",
+  result: "Results",
+};
 
 export function CampaignPopup() {
   const [visible, setVisible] = useState(false);
@@ -39,14 +49,14 @@ export function CampaignPopup() {
           <div className="flex items-center gap-1.5">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#C026D3] shadow-[0_0_4px_#C026D3]" />
             <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-[#1A1B50]/60">
-              Open Campaign
+              {EYEBROW[getAwardPhase()]}
             </p>
           </div>
           <p className="mt-1.5 text-[13px] font-bold leading-snug text-[#1A1B50]">
             「いいね！」アワード
           </p>
           <p className="mt-0.5 text-[11px] text-zinc-500">
-            11/11〜25 · Amazonギフトカード最大3,000円
+            {LIKE_AWARD.entry.short} · Amazonギフトカード最大3,000円
           </p>
           <Link
             href="/news/like-award"
