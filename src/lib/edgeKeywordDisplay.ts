@@ -248,3 +248,32 @@ export function getEdgeKeywordPillLines(keyword: string): string[] {
   }
   return splitEdgeLabelForPillDisplay(plan.raw.replace(/\n/g, ""));
 }
+
+/** ラベル枠の横幅上限（これを超える場合はフォントを縮小） */
+export const EDGE_LABEL_MAX_W = 220;
+
+/** 11px 前後・太字の日本語混じりで1グリフあたりの推定幅（fontSize 比）。7 は実測より狭くはみ出すことが多い */
+const EDGE_LABEL_GLYPH_EM = 1.08;
+const EDGE_LABEL_FONT_MIN = 7.75;
+const EDGE_LABEL_FONT_BASE = 10;
+
+/** キーワード pill のキャンバス座標サイズ */
+export function measureEdgeKeywordPill(keyword: string): { w: number; h: number; fontSize: number; lineHeight: number; lines: string[] } {
+  const lines = getEdgeKeywordPillLines(keyword);
+  const padX = 6;
+  const padY = 4;
+  const cleanLines = lines.map((l) => l.replace(/\u200b/g, ""));
+  const maxGlyphs = Math.max(...cleanLines.map((l) => [...l].length), 1);
+  const innerBudget = EDGE_LABEL_MAX_W - padX * 2;
+  let fontSize = EDGE_LABEL_FONT_BASE;
+  if (maxGlyphs * fontSize * EDGE_LABEL_GLYPH_EM > innerBudget) {
+    fontSize = Math.max(EDGE_LABEL_FONT_MIN, innerBudget / maxGlyphs / EDGE_LABEL_GLYPH_EM);
+  }
+  const lineHeight = Math.max(11, Math.round(13 * (fontSize / EDGE_LABEL_FONT_BASE)));
+  const w = Math.min(
+    EDGE_LABEL_MAX_W,
+    Math.max(52, Math.ceil(maxGlyphs * fontSize * EDGE_LABEL_GLYPH_EM + padX * 2)),
+  );
+  const h = lines.length * lineHeight + padY * 2;
+  return { w, h, fontSize, lineHeight, lines };
+}

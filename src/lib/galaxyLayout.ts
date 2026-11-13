@@ -1,17 +1,20 @@
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { endpointWorkKey, type WorkEndpointMap } from "@/lib/workEndpoint";
+import { measureEdgeKeywordPill } from "@/lib/edgeKeywordDisplay";
 
-/** Distance between adjacent corners of the honeycomb grid (card centres sit on the corners).
- *  370 keeps a horizontal edge long enough for the widest label pill (220) between two cards. */
-const D = 370;
-const SQ3 = Math.sqrt(3);
-/** Lattice extent in cells per direction; generous for the current dataset. */
-const GRID_CELLS = 14;
-/** A card must stay at least this far (in D) from any other group's cards: one blank corner between groups. */
+/** Distance between neighbouring slots on a ring (and between rings). */
+const D = 320;
+/** Card half extents incl. padding, matching the label-overlap test in GraphView. */
+const CARD_HALF_W = 76;
+const CARD_HALF_H = 61;
+/** A card must stay at least this far (in D) from any other group's cards. */
 const ISLAND_MARGIN = 1.7;
 
 type Pt = { x: number; y: number };
 type NeighborMap = Map<string, Set<string>>;
+type LabelBox = { hw: number; hh: number };
+
+const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 function buildNeighborMap(synapses: SynapseRow[], workMap: WorkEndpointMap): NeighborMap {
   const neighbors: NeighborMap = new Map();
@@ -27,17 +30,25 @@ function buildNeighborMap(synapses: SynapseRow[], workMap: WorkEndpointMap): Nei
   return neighbors;
 }
 
-/** Corners of flat-top hexagons: every corner has exactly 3 neighbours at distance D. */
-function buildLattice(cells: number): Pt[] {
-  const out: Pt[] = [];
-  for (let i = -cells; i <= cells; i++) {
-    for (let j = -cells; j <= cells; j++) {
-      const x = 1.5 * D * j;
-      const y = SQ3 * D * i + (SQ3 * D * j) / 2;
-      out.push({ x, y }, { x: x + D, y });
-    }
+/** Half extents of each edge's label pill (the most-liked synapse's first keyword, as GraphView shows it). */
+function buildLabelBoxes(synapses: SynapseRow[], workMap: WorkEndpointMap): Map<string, LabelBox> {
+  const bestByPair = new Map<string, SynapseRow>();
+  for (const s of synapses) {
+    const a = endpointWorkKey(s.source_url, workMap);
+    const b = endpointWorkKey(s.target_url, workMap);
+    if (a === b) continue;
+    const k = pairKey(a, b);
+    const cur = bestByPair.get(k);
+    if (!cur || (s.likes_count ?? 0) > (cur.likes_count ?? 0)) bestByPair.set(k, s);
   }
-  return out;
+  const boxes = new Map<string, LabelBox>();
+  for (const [k, s] of bestByPair) {
+    const kw = s.keywords?.find((x) => x && x.trim());
+    if (!kw) continue;
+    const { w, h } = measureEdgeKeywordPill(kw.trim());
+    boxes.set(k, { hw: w / 2 + 3, hh: h / 2 + 3 });
+  }
+  return boxes;
 }
 
 function findComponents(neighbors: NeighborMap): string[][] {
@@ -90,40 +101,35 @@ function pickRoot(
   return best;
 }
 
-function distPointSeg(p: Pt, a: Pt, b: Pt): number {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len2 = dx * dx + dy * dy;
-  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
-  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
-}
+const wrapAngle = (a: number) => {
+  let x = a % (2 * Math.PI);
+  if (x > Math.PI) x -= 2 * Math.PI;
+  if (x < -Math.PI) x += 2 * Math.PI;
+  return x;
+};
 
-function orient(a: Pt, b: Pt, c: Pt): number {
-  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-}
-
-/** True when segments ab and cd cross at an interior point. */
-function segmentsCross(a: Pt, b: Pt, c: Pt, d: Pt): boolean {
-  const o1 = orient(a, b, c);
-  const o2 = orient(a, b, d);
-  const o3 = orient(c, d, a);
-  const o4 = orient(c, d, b);
-  const eps = 1e-6;
-  return o1 * o2 < -eps && o3 * o4 < -eps;
+function circularMean(angles: number[]): number {
+  let sx = 0;
+  let sy = 0;
+  for (const a of angles) {
+    sx += Math.cos(a);
+    sy += Math.sin(a);
+  }
+  return Math.atan2(sy, sx);
 }
 
 /**
- * Greedy placement of one connected component onto honeycomb corners.
- * The root takes the corner at (0,0); each next node (breadth-first, bigger
- * branches first) takes the free corner that is closest to its placed
- * neighbours, away from other cards, and not behind another card or edge.
- * Corners that no work claims stay blank.
+ * Radial placement of one connected component around its root (at 0,0).
+ * Ring k (k hops from the root) has 6k slots on a regular polygon — hexagon,
+ * 12-gon, 18-gon … — so neighbouring slots are about D apart. Each work takes
+ * the free slot closest to the direction of the works it connects to; slots
+ * nobody claims stay blank. Ring 1 spreads its works evenly around the root.
  */
-function placeComponent(
+function placeRings(
   nodes: string[],
   root: string,
   neighbors: NeighborMap,
-  lattice: Pt[],
+  labels: Map<string, LabelBox>,
 ): Map<string, Pt> {
   const inComp = new Set(nodes);
 
@@ -150,61 +156,88 @@ function placeComponent(
     }
   }
 
-  const rootCorner = lattice.find((v) => v.x === 0 && v.y === 0)!;
-  const placed = new Map<string, Pt>([[root, rootCorner]]);
-  const usedCorners = new Set<Pt>([rootCorner]);
-  const edges: Array<[Pt, Pt]> = [];
+  const placed = new Map<string, Pt>([[root, { x: 0, y: 0 }]]);
+  const angleOf = new Map<string, number>();
+  let prevRadius = 0;
 
-  for (let l = 1; l < levels.length; l++) {
-    const order = [...levels[l]].sort((a, b) => (size.get(b)! - size.get(a)!) || a.localeCompare(b));
-    for (const v of order) {
-      const anchors = [...(neighbors.get(v) ?? [])].filter((n) => placed.has(n)).map((n) => placed.get(n)!);
-      const others = [...placed.entries()].filter(([n]) => !(neighbors.get(v)?.has(n))).map(([, p]) => p);
+  for (let k = 1; k < levels.length; k++) {
+    const group = [...levels[k]].sort((a, b) => (size.get(b)! - size.get(a)!) || a.localeCompare(b));
+    const slots = 6 * Math.max(k, Math.ceil(group.length / 6));
+    const step = (2 * Math.PI) / slots;
+    const radius = Math.max(prevRadius + D, D / (2 * Math.sin(Math.PI / slots)));
+    prevRadius = radius;
 
-      let best: Pt | null = null;
+    const kids = new Map<string, string[]>();
+    for (const v of group) {
+      const p = parent.get(v)!;
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p)!.push(v);
+    }
+
+    const pref = new Map<string, number>();
+    group.forEach((v, i) => {
+      if (k === 1) {
+        // Two works would otherwise sit on opposite sides, i.e. in one straight line: use a V instead.
+        const spread = group.length === 2 ? (2 * Math.PI) / 3 : (2 * Math.PI) / group.length;
+        pref.set(v, wrapAngle(i * spread));
+        return;
+      }
+      const around = [...(neighbors.get(v) ?? [])]
+        .filter((n) => angleOf.has(n))
+        .map((n) => angleOf.get(n)!);
+      let a = around.length > 0 ? circularMean(around) : 0;
+      // Fan the children of one work out around its direction, one slot apart.
+      const p = parent.get(v)!;
+      const siblings = kids.get(p)!;
+      a += (siblings.indexOf(v) - (siblings.length - 1) / 2) * step;
+      // An only child two hops out along one spoke would continue the straight line: bend it one slot.
+      const g = parent.get(p);
+      if (siblings.length === 1 && g && g !== root && Math.abs(wrapAngle(angleOf.get(p)! - angleOf.get(g)!)) < 1e-6) {
+        let h = 0;
+        for (const ch of v) h += ch.charCodeAt(0);
+        a += (h % 2 === 0 ? 1 : -1) * step;
+      }
+      pref.set(v, wrapAngle(a));
+    });
+
+    const taken = new Set<number>();
+    for (const v of group) {
+      const neighborsPlaced = [...(neighbors.get(v) ?? [])].filter((n) => placed.has(n));
+      let bestSlot = -1;
       let bestCost = Infinity;
-      for (const u of lattice) {
-        if (usedCorners.has(u)) continue;
-        let cost = 0;
-        for (const a of anchors) cost += (Math.hypot(u.x - a.x, u.y - a.y) / D) ** 2;
-        if (cost > 40) continue;
-        cost += 0.2 * (Math.hypot(u.x, u.y) / D) ** 2;
-        for (const q of others) {
-          const gap = 1.8 - Math.hypot(u.x - q.x, u.y - q.y) / D;
-          if (gap > 0) cost += 1.5 * gap * gap;
-        }
-        for (const a of anchors) {
-          for (const [, q] of placed) {
-            if (q === a) continue;
-            if (distPointSeg(q, u, a) < 0.3 * D) cost += 50;
+      for (let s = 0; s < slots; s++) {
+        if (taken.has(s)) continue;
+        const ang = s * step;
+        const ux = Math.cos(ang) * radius;
+        const uy = Math.sin(ang) * radius;
+        let cost = Math.abs(wrapAngle(ang - pref.get(v)!)) / step;
+        for (const n of neighborsPlaced) {
+          const box = labels.get(pairKey(v, n));
+          if (!box) continue;
+          const q = placed.get(n)!;
+          if (Math.abs(ux - q.x) / 2 < CARD_HALF_W + box.hw && Math.abs(uy - q.y) / 2 < CARD_HALF_H + box.hh) {
+            cost += 1.5;
           }
-          for (const [e1, e2] of edges) {
-            if (e1 === a || e2 === a) continue;
-            if (segmentsCross(u, a, e1, e2)) cost += 8;
-          }
-        }
-        for (const [e1, e2] of edges) {
-          if (distPointSeg(u, e1, e2) < 0.3 * D) cost += 50;
         }
         if (cost < bestCost) {
           bestCost = cost;
-          best = u;
+          bestSlot = s;
         }
       }
-      const chosen = best!;
-      placed.set(v, chosen);
-      usedCorners.add(chosen);
-      for (const a of anchors) edges.push([chosen, a]);
+      taken.add(bestSlot);
+      const ang = bestSlot * step;
+      angleOf.set(v, ang);
+      placed.set(v, { x: Math.cos(ang) * radius, y: Math.sin(ang) * radius });
     }
   }
   return placed;
 }
 
 /**
- * Honeycomb layout: works sit on the corners of a hexagonal grid (the hub on
- * one corner, others on the nearest free corners, empty corners stay blank).
- * Disconnected groups are laid out the same way and dropped onto the same grid,
- * packed as close to the main group as the margin allows. Pure function — safe for Node and browser.
+ * Radial layout: the hub in the centre, its works on a hexagon around it, their
+ * works on a 12-gon, and so on; empty slots stay blank. Disconnected groups are
+ * laid out the same way and tucked next to the main group with one blank slot
+ * between them. Pure function — safe for Node and browser.
  */
 export function computeGalaxyLayout(
   synapses: SynapseRow[],
@@ -214,75 +247,69 @@ export function computeGalaxyLayout(
   const result = new Map<string, Pt>();
   if (neighbors.size === 0) return result;
 
-  const lattice = buildLattice(GRID_CELLS);
+  const labels = buildLabelBoxes(synapses, workMap);
   const comps = findComponents(neighbors);
 
   const mainRoot = pickRoot([...neighbors.keys()].sort(), neighbors, synapses, workMap);
   const mainComp = comps.find((c) => c.includes(mainRoot))!;
-  const mainPlaced = placeComponent(mainComp, mainRoot, neighbors, lattice);
-  for (const [n, p] of mainPlaced) result.set(n, p);
+  for (const [n, p] of placeRings(mainComp, mainRoot, neighbors, labels)) result.set(n, p);
 
   const islands = comps
     .filter((c) => c !== mainComp)
     .map((nodes) => {
       const root = pickRoot(nodes, neighbors, synapses, workMap);
-      return { nodes, local: placeComponent(nodes, root, neighbors, lattice), root };
+      return { nodes, root, local: placeRings(nodes, root, neighbors, labels) };
     })
     .sort((a, b) => b.nodes.length - a.nodes.length || a.root.localeCompare(b.root));
 
-  let mainRadius = 0;
-  for (const p of mainPlaced.values()) mainRadius = Math.max(mainRadius, Math.hypot(p.x, p.y));
+  // Rotating by 60 degrees keeps every ring slot on a slot.
+  const rotations = [0, 1, 2, 3, 4, 5].map((j) => (j * Math.PI) / 3);
+  const directions = 48;
+  const radialStep = 24;
+  const margin = ISLAND_MARGIN * D;
 
-  const offsets: Pt[] = [];
-  const M = GRID_CELLS * 2;
-  for (let i = -M; i <= M; i++) {
-    for (let j = -M; j <= M; j++) offsets.push({ x: 1.5 * D * j, y: SQ3 * D * i + (SQ3 * D * j) / 2 });
-  }
-
-  // Rotations by 120 degrees and a mirror keep a corner-rooted group on the grid.
-  const orientations: Array<(p: Pt) => Pt> = [];
-  for (let r = 0; r < 3; r++) {
-    for (const mirror of [false, true]) {
-      const c = Math.cos((r * 2 * Math.PI) / 3);
-      const sn = Math.sin((r * 2 * Math.PI) / 3);
-      orientations.push((p) => {
-        const y = mirror ? -p.y : p.y;
-        return { x: p.x * c - y * sn, y: p.x * sn + y * c };
-      });
-    }
-  }
-
-  islands.forEach((isl) => {
+  for (const isl of islands) {
     const occupied = [...result.values()];
     const gx = occupied.reduce((sum, o) => sum + o.x, 0) / occupied.length;
     const gy = occupied.reduce((sum, o) => sum + o.y, 0) / occupied.length;
+    let reach = 0;
+    for (const o of occupied) reach = Math.max(reach, Math.hypot(o.x, o.y));
+    const maxR = reach + 4 * D * Math.sqrt(isl.nodes.length) + 2 * margin;
 
-    let best: { shift: Pt; orient: (p: Pt) => Pt } | null = null;
+    let best: { shift: Pt; rot: number } | null = null;
     let bestCost = Infinity;
-    for (const orient of orientations) {
-      const pts = [...isl.local.values()].map(orient);
+    for (const rot of rotations) {
+      const c = Math.cos(rot);
+      const sn = Math.sin(rot);
+      const pts = [...isl.local.values()].map((p) => ({ x: p.x * c - p.y * sn, y: p.x * sn + p.y * c }));
       const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
       const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
-      for (const t of offsets) {
-        let nearest = Infinity;
-        for (const p of pts) {
-          for (const o of occupied) nearest = Math.min(nearest, Math.hypot(p.x + t.x - o.x, p.y + t.y - o.y));
-        }
-        if (nearest < ISLAND_MARGIN * D) continue;
-        // Closest approach to the existing cards dominates; the centroid only breaks ties.
-        const cost = 20 * nearest + Math.hypot(t.x + cx - gx, t.y + cy - gy);
-        if (cost < bestCost) {
-          bestCost = cost;
-          best = { shift: t, orient };
+      for (let d = 0; d < directions; d++) {
+        const theta = (d / directions) * 2 * Math.PI;
+        for (let r = 0; r <= maxR; r += radialStep) {
+          const tx = Math.cos(theta) * r;
+          const ty = Math.sin(theta) * r;
+          let nearest = Infinity;
+          for (const p of pts) {
+            for (const o of occupied) nearest = Math.min(nearest, Math.hypot(p.x + tx - o.x, p.y + ty - o.y));
+          }
+          if (nearest < margin) continue;
+          const cost = 20 * nearest + Math.hypot(tx + cx - gx, ty + cy - gy);
+          if (cost < bestCost) {
+            bestCost = cost;
+            best = { shift: { x: tx, y: ty }, rot };
+          }
+          break;
         }
       }
     }
-    const chosen = best ?? { shift: { x: mainRadius + 2 * D * isl.nodes.length, y: 0 }, orient: orientations[0] };
+    const chosen = best ?? { shift: { x: 0, y: maxR }, rot: 0 };
+    const c = Math.cos(chosen.rot);
+    const sn = Math.sin(chosen.rot);
     for (const [n, p] of isl.local) {
-      const q = chosen.orient(p);
-      result.set(n, { x: q.x + chosen.shift.x, y: q.y + chosen.shift.y });
+      result.set(n, { x: p.x * c - p.y * sn + chosen.shift.x, y: p.x * sn + p.y * c + chosen.shift.y });
     }
-  });
+  }
 
   return new Map([...result.entries()].map(([n, p]) => [n, { x: p.x, y: p.y }]));
 }
