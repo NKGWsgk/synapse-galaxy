@@ -107,7 +107,7 @@ const POLES = {
   art:    { x:  0,                        y:  POLE_LABEL_RADIUS * 1.0 },
 };
 
-const ZOOM_MIN = 0.3;
+const ZOOM_MIN = 0.15;
 const ZOOM_MAX = 2.5;
 
 /** +/−／100% UI など、画面中心を軸にしたズームの補間時間 */
@@ -2085,7 +2085,11 @@ export function GraphView({
     const cy = e.clientY - rect.top;
     const z0 = zoomRef.current;
     const p0 = panRef.current;
-    const factor = Math.exp(-e.deltaY * 0.0015);
+    // Trackpad pinch arrives as ctrl+wheel with tiny deltas, so it needs a much
+    // higher gain than a mouse wheel (and a clamp for ctrl+mouse-wheel).
+    const factor = e.ctrlKey
+      ? Math.exp(-Math.max(-40, Math.min(40, e.deltaY)) * 0.012)
+      : Math.exp(-e.deltaY * 0.0015);
     const z1 = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z0 * factor));
     const cxw = rect.width / 2;
     const cyw = rect.height / 2;
