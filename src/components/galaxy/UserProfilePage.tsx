@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import { CopyLinkButton } from "@/components/galaxy/CopyLinkButton";
+import { buildXIntentUrl } from "@/lib/synapseShareText";
 import { SiteFooter } from "@/components/galaxy/SiteFooter";
 import { GraphView, type GraphDetailRequest } from "./GraphView";
 import { resolveContentDisplayTitle } from "@/lib/ogpDisplay";
@@ -148,6 +149,19 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
             </div>
           </div>
           <div className="flex w-full items-center justify-end gap-2 sm:ml-auto sm:w-auto">
+            {profileShareUrl && synapses.length > 0 ? (
+              <a
+                href={buildXIntentUrl(
+                  `${isOwnPage ? "私" : (displayName ?? "この人")}の銀河：${synapses.length}本のシナプスで${worksCount}作品をつなぎました\n#シナプスギャラクシー`,
+                  profileShareUrl,
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-black px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-zinc-800 sm:text-xs"
+              >
+                <span aria-hidden className="font-black">𝕏</span> でシェア
+              </a>
+            ) : null}
             <CopyLinkButton
               textToCopy={profileShareUrl}
               idleLabel={isOwnPage ? "URLをコピー" : "URLをコピー"}

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { createServiceClient } from "@/lib/supabase/clients";
 import { UserProfilePage } from "@/components/galaxy/UserProfilePage";
 import { SITE_NAME_EN, SITE_NAME_JA } from "@/lib/siteMetadata";
+import { publicDisplayName } from "@/lib/userGalaxy";
 
 export const dynamic = "force-dynamic";
 
@@ -13,12 +14,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
     const supabase = createServiceClient();
     const { data } = await supabase.auth.admin.getUserById(id);
     if (data?.user) {
-      const meta = data.user.user_metadata;
-      displayName =
-        (meta?.nickname as string | undefined) ??
-        (meta?.full_name as string | undefined) ??
-        data.user.email?.split("@")[0] ??
-        displayName;
+      displayName = publicDisplayName(data.user.user_metadata);
     }
   } catch { /* noop */ }
   return {
@@ -47,12 +43,7 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
     if (userError || !userResult?.user) {
       notFound();
     }
-    const meta = userResult.user.user_metadata;
-    displayName =
-      (meta?.nickname as string | undefined) ??
-      (meta?.full_name as string | undefined) ??
-      userResult.user.email ??
-      userId.slice(0, 12);
+    displayName = publicDisplayName(userResult.user.user_metadata);
   } catch {
     notFound();
   }
