@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/clients";
+import { publicDisplayName } from "@/lib/userGalaxy";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id: userId } = await params;
@@ -22,12 +23,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   let displayName = userId.slice(0, 12);
   try {
     const { data: userResult } = await supabase.auth.admin.getUserById(userId);
-    const meta = userResult?.user?.user_metadata;
-    displayName =
-      (meta?.nickname as string | undefined) ??
-      (meta?.full_name as string | undefined) ??
-      userResult?.user?.email ??
-      userId.slice(0, 12);
+    displayName = publicDisplayName(userResult?.user?.user_metadata);
   } catch { /* noop */ }
 
   return NextResponse.json({
