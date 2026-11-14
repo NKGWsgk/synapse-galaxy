@@ -12,7 +12,7 @@ export default function NotFound() {
         href="/"
         className="mt-2 rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
       >
-        銀河に戻る
+        トップに戻る
       </Link>
     </div>
   );

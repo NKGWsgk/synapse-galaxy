@@ -121,7 +121,7 @@ export default async function WorkPage({ params }: { params: Promise<{ slug: str
                 href={`/?focus=${entry.slug}`}
                 className="inline-flex items-center gap-2 rounded-[4px] bg-[#1A1B50] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#2D2F7A]"
               >
-                銀河マップで見る →
+                マップで見る →
               </Link>
             </div>
           </div>
@@ -163,7 +163,7 @@ export default async function WorkPage({ params }: { params: Promise<{ slug: str
 
         <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 pt-6">
           <Link href="/work" className="text-sm font-medium text-[#1A1B50] hover:text-[#2D2F7A]">← 作品一覧</Link>
-          <Link href="/" className="text-sm font-medium text-[#1A1B50] hover:text-[#2D2F7A]">銀河に戻る →</Link>
+          <Link href="/" className="text-sm font-medium text-[#1A1B50] hover:text-[#2D2F7A]">トップに戻る →</Link>
         </div>
         <AffiliateDisclosure className="mt-6 text-[11px] text-zinc-400" />
       </main>

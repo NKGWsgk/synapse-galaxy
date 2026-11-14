@@ -1,6 +1,6 @@
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 
-/** マップ（銀河グラフ）への表示閾値: 作品がこの数以上のシナプスに登場して初めてノード化する */
+/** マップへの表示閾値: 作品がこの数以上のシナプスに登場して初めてノード化する */
 export const MAP_MIN_CONNECTIONS = 2;
 
 /** どちらか一方の端が MAP_MIN_CONNECTIONS 以上の接続を持つシナプスを残す（ハブに繋がる葉は残し、両端とも1本だけの孤立ペアを除く。クライアント表示とサーバー配置計算で共有） */

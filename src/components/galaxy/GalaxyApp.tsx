@@ -83,7 +83,7 @@ function saveMobileViewMode(mode: ViewMode) {
   try { localStorage.setItem(MOBILE_VIEW_KEY, mode); } catch { /* noop */ }
 }
 
-/** データ取得中 — 空白＋テキストではなく銀河の骨格を先に見せる */
+/** データ取得中 — 空白＋テキストではなくマップの骨格を先に見せる */
 function GalaxyLoadingShell() {
   const ringSizes = [140, 280, 420, 560];
   return (
@@ -108,7 +108,7 @@ function GalaxyLoadingShell() {
         <div className="h-[2.875rem] shrink-0 animate-pulse bg-zinc-50" />
       </motion.div>
       <p className="absolute bottom-[18%] text-xs font-medium tracking-wide text-zinc-400/90">
-        銀河を描画中…
+        マップを描画中…
       </p>
     </div>
   );
@@ -125,7 +125,7 @@ function EmptyGalaxy({ onOpenPost }: { onOpenPost: () => void }) {
       <div>
         <h2 className="text-base font-semibold text-zinc-900">まだシナプスがありません</h2>
         <p className="mt-1.5 max-w-xs text-sm leading-relaxed text-zinc-500">
-          最初の接続を繋いで、コンテンツの銀河をはじめましょう。
+          最初のシナプスを繋いで、作品のつながりをはじめましょう。
         </p>
       </div>
       <button

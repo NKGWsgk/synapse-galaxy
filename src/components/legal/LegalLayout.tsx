@@ -29,7 +29,7 @@ export function LegalLayout({ title, updated, children }: Props) {
         </div>
         <div className="mt-10 border-t border-zinc-200 pt-6">
           <Link href="/" className="text-sm font-medium text-indigo-600 transition hover:text-indigo-500">
-            ← 銀河に戻る
+            ← トップに戻る
           </Link>
         </div>
       </main>

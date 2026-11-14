@@ -49,7 +49,7 @@ export default async function SharedSynapsePage({ params }: { params: Promise<{ 
         href={d.appPath}
         className="mt-2 inline-flex w-fit items-center gap-2 rounded-[4px] bg-[#1A1B50] px-5 py-2.5 text-sm font-bold text-white no-underline"
       >
-        銀河マップで見る →
+        マップで見る →
       </Link>
     </main>
   );

@@ -221,7 +221,7 @@ export default function LikeAwardNewsPage() {
 
         <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 pt-6">
           <Link href="/" className="text-sm font-medium text-[#1A1B50] transition hover:text-[#2D2F7A]">
-            ← 銀河に戻る
+            ← トップに戻る
           </Link>
           <p className="text-xs text-zinc-400">
             {SITE_NAME_JA} Campaign News

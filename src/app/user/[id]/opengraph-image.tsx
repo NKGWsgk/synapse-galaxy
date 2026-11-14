@@ -2,7 +2,7 @@ import { ImageResponse } from "next/og";
 import { clipText, fallbackOgpResponse, loadCoverDataUri, loadJpFont } from "@/lib/ogImageAssets";
 import { loadUserGalaxy } from "@/lib/userGalaxy";
 
-export const alt = "SYNAPSE Galaxy のユーザーの銀河";
+export const alt = "SYNAPSE Galaxy のユーザーページ";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 export const revalidate = 3600;
@@ -62,7 +62,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
 
   const hub = g.works[0] ?? null;
   const sats = g.works.slice(1, 1 + SAT_POS.length);
-  const heading = `${clipText(g.displayName, 12)}の銀河`;
+  const heading = `${clipText(g.displayName, 12)}のシナプス`;
   const stats: Array<[string, string]> = [
     [String(g.postCount), "シナプス"],
     [String(g.worksCount), "作品"],

@@ -152,7 +152,7 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
             {profileShareUrl && synapses.length > 0 ? (
               <a
                 href={buildXIntentUrl(
-                  `${isOwnPage ? "私" : (displayName ?? "この人")}の銀河：${synapses.length}本のシナプスで${worksCount}作品をつなぎました\n#シナプスギャラクシー`,
+                  `${isOwnPage ? "私は" : `${displayName ?? "この人"}さんは`}${synapses.length}本のシナプスで${worksCount}作品をつなぎました\n#シナプスギャラクシー`,
                   profileShareUrl,
                 )}
                 target="_blank"
