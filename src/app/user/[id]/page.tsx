@@ -17,9 +17,15 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       displayName = publicDisplayName(data.user.user_metadata);
     }
   } catch { /* noop */ }
+  const title = `${displayName}のシナプス`;
+  const description = `${SITE_NAME_JA}（${SITE_NAME_EN}）の${displayName}さんのプロフィール。投稿したシナプス（コンテンツ間の接続）と受け取ったいいね数を確認できます。`;
+  const socialTitle = `${title} | ${SITE_NAME_JA}`;
   return {
-    title: `${displayName}のシナプス`,
-    description: `${SITE_NAME_JA}（${SITE_NAME_EN}）の${displayName}さんのプロフィール。投稿したシナプス（コンテンツ間の接続）と受け取ったいいね数を確認できます。`,
+    title,
+    description,
+    // ページ側で openGraph を指定すると親の値は引き継がれないので、必要な項目をここで揃える
+    openGraph: { type: "profile", locale: "ja_JP", url: `/user/${id}`, siteName: SITE_NAME_EN, title: socialTitle, description },
+    twitter: { card: "summary_large_image", title: socialTitle, description },
   };
 }
 
