@@ -48,12 +48,19 @@ const SLUG_OVERRIDES: Record<string, string> = {
   "work-88a707ba": "theory-of-relativity-input",
   "work-d77f36e8": "kiyo-in-kyoto-maiko-no-makanai",
   "work-e93d80b4": "akane-banashi",
-  "work-6d26381b": "kamome-shokudo",
   "glasses": "megane-glasses",
   "diary": "umimachi-diary",
   "1-ebook": "mame-to-mugi",
   "rsa": "rsa-cryptography-summer-wars",
   "vs-ai-rehacq": "quantum-computer-vs-ai-rehacq",
+};
+
+/**
+ * 同じ作品が別の作品IDで二重に登録されているものを、作品ページ上で1つにまとめる（キー: 消す側の share_slug、値: 残す側）。
+ * 消す側の旧URL（と `aliases`）は、残す側へ 308 で送る。アプリのマップ上の二重登録は、データ側の修正が必要。
+ */
+const WORK_MERGES: Record<string, { into: string; aliases?: string[] }> = {
+  "work-6d26381b": { into: "seagull-diner", aliases: ["kamome-shokudo"] },
 };
 
 const PAGE_SIZE = 1000;
@@ -109,6 +116,20 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
     slugById.set(id, SLUG_OVERRIDES[base.toLowerCase()] ?? base);
     focusSlugById.set(id, base);
   }
+  // 二重登録された作品を1つにまとめる（消す側の id → 残す側の id）
+  const idByFocusSlug = new Map<string, string>();
+  for (const [id, slug] of focusSlugById) idByFocusSlug.set(slug.toLowerCase(), id);
+  const remap = new Map<string, string>();
+  const mergedAliases = new Map<string, string[]>();
+  for (const [from, { into, aliases }] of Object.entries(WORK_MERGES)) {
+    const fromId = idByFocusSlug.get(from.toLowerCase());
+    const intoId = idByFocusSlug.get(into.toLowerCase());
+    if (!fromId || !intoId || fromId === intoId) continue;
+    remap.set(fromId, intoId);
+    mergedAliases.set(intoId, [...(mergedAliases.get(intoId) ?? []), from, ...(aliases ?? [])]);
+  }
+  const canon = (id: string) => remap.get(id) ?? id;
+
   // 念のため、最終的な重複は id 接尾辞で解消する
   const counts = new Map<string, number>();
   for (const slug of slugById.values()) counts.set(slug.toLowerCase(), (counts.get(slug.toLowerCase()) ?? 0) + 1);
@@ -127,8 +148,8 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
   };
 
   for (const s of synapses) {
-    const a = endpointWorkKey(s.source_url, workMap);
-    const b = endpointWorkKey(s.target_url, workMap);
+    const a = canon(endpointWorkKey(s.source_url, workMap));
+    const b = canon(endpointWorkKey(s.target_url, workMap));
     if (a === b || !slugById.has(a) || !slugById.has(b)) continue;
     const base = {
       keyword: firstKeyword(s),
@@ -150,7 +171,10 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
     entries.push({
       slug: slugById.get(id)!,
       focusSlug: focusSlugById.get(id)!,
-      aliases: focusSlugById.get(id)!.toLowerCase() !== slugById.get(id)!.toLowerCase() ? [focusSlugById.get(id)!] : [],
+      aliases: [
+        ...(focusSlugById.get(id)!.toLowerCase() !== slugById.get(id)!.toLowerCase() ? [focusSlugById.get(id)!] : []),
+        ...(mergedAliases.get(id) ?? []),
+      ],
       title: info.title!.trim(),
       url: info.representativeUrl,
       imageUrl: info.imageUrl ?? null,
@@ -163,7 +187,7 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
 }
 
 /** 1つ以上のシナプスでつながっている作品だけを返す（10分キャッシュ）。 */
-export const getWorkEntries = unstable_cache(loadWorkEntries, ["work-entries-v3"], { revalidate: 600 });
+export const getWorkEntries = unstable_cache(loadWorkEntries, ["work-entries-v4"], { revalidate: 600 });
 
 export async function findWorkEntry(slug: string): Promise<WorkEntry | null> {
   const key = slug.toLowerCase();
