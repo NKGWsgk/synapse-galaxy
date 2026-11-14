@@ -352,7 +352,7 @@ export function SmartInputPanel({
   onCreated,
 }: {
   user: User | null;
-  onCreated: (sourceUrl: string) => void;
+  onCreated: (sourceUrl: string, synapseId?: string) => void;
 }) {
   const supabase = useMemo(() => createBrowserClient(), []);
   const { notifySessionExpired } = useAuthFeedback();
@@ -450,7 +450,8 @@ export function SmartInputPanel({
       setTitle("");
       setDescription("");
       setConfirmOpen(false);
-      setTimeout(() => onCreated(createdSourceUrl), 800);
+      const createdId = typeof data?.synapse?.id === "string" ? (data.synapse.id as string) : undefined;
+      setTimeout(() => onCreated(createdSourceUrl, createdId), 800);
     } catch {
       setMessage("通信エラー");
       setConfirmOpen(false);

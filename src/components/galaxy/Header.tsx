@@ -50,7 +50,7 @@ type Props = {
   onFocusUrl: (url: string) => void;
   onUser: (user: User | null) => void;
   user: User | null;
-  onSynapseCreated: (sourceUrl: string) => void;
+  onSynapseCreated: (sourceUrl: string, synapseId?: string) => void;
   mobileOpen: boolean;
   onMobileOpenChange: (open: boolean) => void;
   viewMode: ViewMode;
@@ -266,8 +266,8 @@ export function Header({
     closeMobile();
   }
 
-  function handleSynapseCreated(sourceUrl: string) {
-    onSynapseCreated(sourceUrl);
+  function handleSynapseCreated(sourceUrl: string, synapseId?: string) {
+    onSynapseCreated(sourceUrl, synapseId);
     closeMobile();
   }
 

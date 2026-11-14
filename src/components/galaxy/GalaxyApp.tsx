@@ -20,6 +20,7 @@ import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { filterMapSynapses } from "@/lib/mapFilter";
 import type { WorkEndpointMap } from "@/lib/workResolve";
 import { CampaignPopup } from "./CampaignPopup";
+import { SynapseSharePrompt } from "./SynapseSharePrompt";
 
 function mostConnectedUrl(synapses: SynapseRow[]): string | null {
   const counts = new Map<string, number>();
@@ -209,6 +210,7 @@ export function GalaxyApp({ googleClientId }: { googleClientId?: string | null }
 function GalaxyAppInner({ googleClientId }: { googleClientId?: string | null }) {
   const { showToast } = useAuthFeedback();
   const [synapses, setSynapses] = useState<SynapseRow[]>([]);
+  const [sharePromptId, setSharePromptId] = useState<string | null>(null);
   const [workEndpoints, setWorkEndpoints] = useState<WorkEndpointMap>({ [STATIC_HUB_URL]: STATIC_HUB_ENTRY });
   const [synapsesLoaded, setSynapsesLoaded] = useState(false);
   const [initialLayout, setInitialLayout] = useState<Map<string, { x: number; y: number }> | null>(null);
@@ -359,7 +361,8 @@ function GalaxyAppInner({ googleClientId }: { googleClientId?: string | null }) 
     if (next > limit) setGateOpen(true);
   }, [viewCount, user, userPostCount, workEndpoints]);
 
-  const handleSynapseCreated = useCallback((sourceUrl: string) => {
+  const handleSynapseCreated = useCallback((sourceUrl: string, synapseId?: string) => {
+    if (synapseId) setSharePromptId(synapseId);
     const publicUrl = normalizeSynapseEndpoint(sourceUrl);
     setFocusUrl(publicUrl);
     setMobileNavOpen(false);
@@ -487,6 +490,9 @@ function GalaxyAppInner({ googleClientId }: { googleClientId?: string | null }) 
         <main className="relative min-h-0 flex-1 overflow-hidden">
           <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,rgba(99,102,241,0.05),transparent_60%)]" />
           <CampaignPopup />
+          {sharePromptId ? (
+            <SynapseSharePrompt key={sharePromptId} synapseId={sharePromptId} onClose={() => setSharePromptId(null)} />
+          ) : null}
           <AnimatePresence mode="wait">
             {!viewReady ? (
               <div key="loading" className="h-full w-full">
