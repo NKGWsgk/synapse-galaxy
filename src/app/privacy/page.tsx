@@ -56,7 +56,7 @@ export default function PrivacyPage() {
             <strong>Supabase:</strong> データベース・認証基盤としてユーザー情報・投稿データを保存
           </li>
           <li>
-            <strong>Google:</strong> OAuth 認証、Gemini API（テキスト解析）
+            <strong>Google:</strong> OAuth 認証、Gemini API（テキスト解析）、Google アナリティクス（アクセス解析）
           </li>
           <li>
             <strong>Vercel:</strong> ホスティング（アクセスログが生成される場合があります）
@@ -79,6 +79,35 @@ export default function PrivacyPage() {
         <p>
           本サービスは認証セッションの維持（Supabase）および閲覧回数の記録（localStorage）に
           ブラウザストレージを使用します。ブラウザ設定で無効化できますが、一部機能が利用できなくなる場合があります。
+        </p>
+      </Section>
+
+      <Section title="6-2. アクセス解析（Google アナリティクス）">
+        <p>
+          本サービスは、利用状況の把握と改善のため、Google LLC が提供する Google アナリティクス（GA4）を使用しています。
+          Google アナリティクスは Cookie 等を用いて、閲覧したページ、流入元、端末・ブラウザの種類などの情報を収集します。
+          収集される情報は、個人を特定しない形で Google に送信されます。
+        </p>
+        <p>
+          ブラウザの設定で Cookie を無効にするか、
+          <a
+            href="https://tools.google.com/dlpage/gaoptout"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-indigo-600 hover:underline"
+          >
+            Google アナリティクス オプトアウト アドオン
+          </a>
+          を利用することで、収集を拒否できます。詳細は
+          <a
+            href="https://policies.google.com/technologies/partner-sites?hl=ja"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-indigo-600 hover:underline"
+          >
+            Google のポリシー
+          </a>
+          をご確認ください。
         </p>
       </Section>
 
