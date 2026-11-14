@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import { AffiliateDisclosure } from "@/components/AffiliateDisclosure";
 import { SITE_NAME_EN } from "@/lib/siteMetadata";
 import { getWorkEntries } from "@/lib/workPages";
 
@@ -41,6 +42,7 @@ export default async function WorkIndexPage() {
             </li>
           ))}
         </ul>
+        <AffiliateDisclosure className="mt-6 text-[11px] text-zinc-400" />
       </main>
     </div>
   );

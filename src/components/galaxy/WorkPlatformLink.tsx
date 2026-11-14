@@ -44,7 +44,7 @@ export function WorkPlatformLink({
     <a
       href={withSynapseAffiliate(url)}
       target="_blank"
-      rel="noopener noreferrer"
+      rel="sponsored noopener noreferrer"
       className={[
         "inline-flex items-center gap-1 font-semibold shadow-sm transition",
         compact

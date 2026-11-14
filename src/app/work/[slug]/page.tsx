@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { AffiliateDisclosure } from "@/components/AffiliateDisclosure";
+import { WorkPlatformLink } from "@/components/galaxy/WorkPlatformLink";
+import { detectContentPlatform } from "@/lib/contentPlatform";
 import { SITE_NAME_EN, SITE_NAME_JA, getSiteUrl } from "@/lib/siteMetadata";
 import { findWorkEntry, type WorkEntry } from "@/lib/workPages";
 
@@ -8,6 +11,9 @@ export const revalidate = 600;
 
 const TITLE_SUFFIX = "次に観る・読む作品のつながり";
 const REASON_MAX = 1200;
+
+/** Amazon・配信サービスなど、購入・視聴先として判別できる URL のときだけリンクを出す */
+const isStoreUrl = (url: string) => detectContentPlatform(url) !== "other";
 
 function buildDescription(e: WorkEntry): string {
   const top = e.links.slice(0, 3).map((l) => (l.keyword ? `${l.otherTitle}（${l.keyword}）` : l.otherTitle));
@@ -97,12 +103,15 @@ export default async function WorkPage({ params }: { params: Promise<{ slug: str
               「{entry.title}」が好きな人に、次に観る・読む作品を。{SITE_NAME_JA}（{SITE_NAME_EN}）では、
               作品と作品が「なぜつながるか」を読者のレビューで紹介しています。
             </p>
-            <Link
-              href={`/?focus=${entry.slug}`}
-              className="mt-4 inline-flex items-center gap-2 rounded-[4px] bg-[#1A1B50] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#2D2F7A]"
-            >
-              銀河マップで見る →
-            </Link>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {isStoreUrl(entry.url) ? <WorkPlatformLink url={entry.url} /> : null}
+              <Link
+                href={`/?focus=${entry.slug}`}
+                className="inline-flex items-center gap-2 rounded-[4px] bg-[#1A1B50] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#2D2F7A]"
+              >
+                銀河マップで見る →
+              </Link>
+            </div>
           </div>
         </div>
 
@@ -129,7 +138,12 @@ export default async function WorkPage({ params }: { params: Promise<{ slug: str
                     {l.reason.length > REASON_MAX ? `${l.reason.slice(0, REASON_MAX)}…` : l.reason}
                   </p>
                 ) : null}
-                {l.likes > 0 ? <p className="mt-2 text-xs text-zinc-400">いいね {l.likes}</p> : null}
+                {isStoreUrl(l.otherUrl) || l.likes > 0 ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    {isStoreUrl(l.otherUrl) ? <WorkPlatformLink url={l.otherUrl} compact inline /> : null}
+                    {l.likes > 0 ? <span className="text-xs text-zinc-400">いいね {l.likes}</span> : null}
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -139,6 +153,7 @@ export default async function WorkPage({ params }: { params: Promise<{ slug: str
           <Link href="/work" className="text-sm font-medium text-[#1A1B50] hover:text-[#2D2F7A]">← 作品一覧</Link>
           <Link href="/" className="text-sm font-medium text-[#1A1B50] hover:text-[#2D2F7A]">銀河に戻る →</Link>
         </div>
+        <AffiliateDisclosure className="mt-6 text-[11px] text-zinc-400" />
       </main>
     </div>
   );

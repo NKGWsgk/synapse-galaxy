@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AffiliateDisclosure } from "@/components/AffiliateDisclosure";
 
 type Props = {
   className?: string;
@@ -20,6 +21,7 @@ export function SiteFooter({ className = "", onLinkClick }: Props) {
       <Link href="/privacy" onClick={onLinkClick} className="transition hover:text-zinc-600">
         プライバシーポリシー
       </Link>
+      <AffiliateDisclosure className="basis-full" />
     </footer>
   );
 }

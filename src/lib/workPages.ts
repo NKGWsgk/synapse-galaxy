@@ -8,6 +8,8 @@ import { buildWorkEndpointMap, type WorkEndpointInfo } from "@/lib/workResolve";
 export type WorkLink = {
   otherSlug: string;
   otherTitle: string;
+  /** 相手作品の代表 URL（購入・視聴リンク用。アフィリエイト付与は表示側で行う） */
+  otherUrl: string;
   /** out: この作品 → 相手 / in: 相手 → この作品 */
   direction: "out" | "in";
   keyword: string | null;
@@ -19,6 +21,8 @@ export type WorkLink = {
 export type WorkEntry = {
   slug: string;
   title: string;
+  /** この作品の代表 URL（購入・視聴リンク用） */
+  url: string;
   imageUrl: string | null;
   description: string | null;
   links: WorkLink[];
@@ -103,8 +107,8 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
       likes: s.likes_count ?? 0,
       createdAt: s.created_at,
     };
-    add(a, { ...base, otherSlug: slugById.get(b)!, otherTitle: infoById.get(b)!.title!.trim(), direction: "out" });
-    add(b, { ...base, otherSlug: slugById.get(a)!, otherTitle: infoById.get(a)!.title!.trim(), direction: "in" });
+    add(a, { ...base, otherSlug: slugById.get(b)!, otherTitle: infoById.get(b)!.title!.trim(), otherUrl: infoById.get(b)!.representativeUrl, direction: "out" });
+    add(b, { ...base, otherSlug: slugById.get(a)!, otherTitle: infoById.get(a)!.title!.trim(), otherUrl: infoById.get(a)!.representativeUrl, direction: "in" });
     const at = s.updated_at ?? s.created_at;
     touch(a, at);
     touch(b, at);
@@ -117,6 +121,7 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
     entries.push({
       slug: slugById.get(id)!,
       title: info.title!.trim(),
+      url: info.representativeUrl,
       imageUrl: info.imageUrl ?? null,
       description: info.description?.trim() || null,
       links,
@@ -127,7 +132,7 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
 }
 
 /** 1つ以上のシナプスでつながっている作品だけを返す（10分キャッシュ）。 */
-export const getWorkEntries = unstable_cache(loadWorkEntries, ["work-entries-v1"], { revalidate: 600 });
+export const getWorkEntries = unstable_cache(loadWorkEntries, ["work-entries-v2"], { revalidate: 600 });
 
 export async function findWorkEntry(slug: string): Promise<WorkEntry | null> {
   const key = slug.toLowerCase();
