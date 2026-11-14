@@ -5,9 +5,21 @@ import { AffiliateDisclosure } from "@/components/AffiliateDisclosure";
 import { WorkPlatformLink } from "@/components/galaxy/WorkPlatformLink";
 import { detectContentPlatform } from "@/lib/contentPlatform";
 import { SITE_NAME_EN, SITE_NAME_JA, getSiteUrl } from "@/lib/siteMetadata";
-import { findWorkEntry, type WorkEntry } from "@/lib/workPages";
+import { findWorkEntry, getWorkEntries, type WorkEntry } from "@/lib/workPages";
 
 export const revalidate = 600;
+
+// トップ（地図アプリ）は拡大を止めているが、読み物のページでは拡大できるようにする
+export const viewport = { width: "device-width", initialScale: 1, maximumScale: 5, userScalable: true };
+
+/** 全作品ページをビルド時に生成する。取得に失敗しても、アクセス時に生成されるので空配列で続行する。 */
+export async function generateStaticParams() {
+  try {
+    return (await getWorkEntries()).map((e) => ({ slug: e.slug }));
+  } catch {
+    return [];
+  }
+}
 
 const TITLE_SUFFIX = "次に観る・読む作品のつながり";
 const REASON_MAX = 1200;

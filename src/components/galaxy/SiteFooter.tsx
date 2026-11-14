@@ -14,6 +14,10 @@ export function SiteFooter({ className = "", onLinkClick }: Props) {
         className,
       ].join(" ")}
     >
+      <Link href="/work" onClick={onLinkClick} className="transition hover:text-zinc-600">
+        作品一覧
+      </Link>
+      <span aria-hidden className="text-zinc-300">·</span>
       <Link href="/terms" onClick={onLinkClick} className="transition hover:text-zinc-600">
         利用規約
       </Link>

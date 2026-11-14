@@ -25,25 +25,6 @@ export const SITE_OGP_IMAGE = {
   alt: "SYNAPSE Galaxy — コンテンツを「なぜ繋がるか」で結ぶシナプス型ネットワーク",
 } as const;
 
-export const SITE_KEYWORDS = [
-  SITE_NAME_JA,
-  "シナプス ギャラクシー",
-  SITE_NAME_EN,
-  "synapse galaxy",
-  "シナプス",
-  "コンテンツ",
-  "読書",
-  "映画",
-  "ネットワーク",
-  "知的好奇心",
-  "SNS",
-  "書籍",
-  "動画",
-  "接続",
-  "コンパス",
-  "OGP",
-];
-
 function urlFromHost(host: string): URL | null {
   const trimmed = host.trim();
   if (!trimmed) return null;
@@ -79,7 +60,6 @@ export function buildSiteMetadata(overrides?: Metadata): Metadata {
       template: `%s | ${SITE_NAME_JA}`,
     },
     description: SITE_DESCRIPTION,
-    keywords: [...SITE_KEYWORDS],
     applicationName: SITE_BRAND_NAME,
     creator: SITE_NAME_EN,
     publisher: SITE_NAME_EN,

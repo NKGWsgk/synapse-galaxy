@@ -6,6 +6,8 @@ import { getWorkEntries } from "@/lib/workPages";
 
 export const revalidate = 600;
 
+export const viewport = { width: "device-width", initialScale: 1, maximumScale: 5, userScalable: true };
+
 export const metadata: Metadata = {
   title: { absolute: `作品一覧｜次に観る・読む作品のつながり - ${SITE_NAME_EN}` },
   description:
