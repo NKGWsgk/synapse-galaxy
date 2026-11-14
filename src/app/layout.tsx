@@ -30,7 +30,9 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const gaMeasurementId = getGaMeasurementId();
+  // 開発サーバーやプレビュー環境のアクセスが本番の集計に混ざらないよう、本番環境でだけ計測する
+  const isProduction = (process.env.VERCEL_ENV ?? process.env.NODE_ENV) === "production";
+  const gaMeasurementId = isProduction ? getGaMeasurementId() : null;
 
   return (
     <html
