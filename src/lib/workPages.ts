@@ -19,7 +19,12 @@ export type WorkLink = {
 };
 
 export type WorkEntry = {
+  /** 作品ページ（/work/<slug>）のスラッグ。検索語を含む名前に差し替えているものがある */
   slug: string;
+  /** アプリ側の `?focus=` が解決できるスラッグ（DB上の share_slug。差し替え前の名前） */
+  focusSlug: string;
+  /** 旧URL。/work/<alias> は 301 で /work/<slug> へ送る */
+  aliases: string[];
   title: string;
   /** この作品の代表 URL（購入・視聴リンク用） */
   url: string;
@@ -27,6 +32,28 @@ export type WorkEntry = {
   description: string | null;
   links: WorkLink[];
   updatedAt: string;
+};
+
+/**
+ * 作品ページのスラッグの手動指定（キー: DBの share_slug＝旧スラッグ、値: 新スラッグ）。
+ * share_slug が `work-xxxxxxxx`（原題から英語スラッグを作れなかったもの）のままだと、URLに作品名が入らないため。
+ * 旧URLは 301 で新URLへ送る。アプリの `?focus=` は旧スラッグのまま解決される。
+ */
+const SLUG_OVERRIDES: Record<string, string> = {
+  "work-eb665477": "quantum-mechanics-for-beginners",
+  "work-1688a2b5": "quantum-mechanics-without-equations",
+  "work-1c5c4b04": "the-code-book",
+  "work-755ef508": "history-of-cryptography-geniuses",
+  "work-76801885": "may-my-dad-be-angry-again",
+  "work-88a707ba": "theory-of-relativity-input",
+  "work-d77f36e8": "kiyo-in-kyoto-maiko-no-makanai",
+  "work-e93d80b4": "akane-banashi",
+  "work-6d26381b": "kamome-shokudo",
+  "glasses": "megane-glasses",
+  "diary": "umimachi-diary",
+  "1-ebook": "mame-to-mugi",
+  "rsa": "rsa-cryptography-summer-wars",
+  "vs-ai-rehacq": "quantum-computer-vs-ai-rehacq",
 };
 
 const PAGE_SIZE = 1000;
@@ -70,6 +97,7 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
   }
 
   const slugById = new Map<string, string>();
+  const focusSlugById = new Map<string, string>();
   for (const [id, info] of infoById) {
     let slug: string | null = null;
     try {
@@ -78,7 +106,8 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
       slug = null;
     }
     const base = slug && !GENERIC_SLUG.test(slug.split("~")[0]!) ? slug : `work-${shortId(id, 8)}`;
-    slugById.set(id, base);
+    slugById.set(id, SLUG_OVERRIDES[base.toLowerCase()] ?? base);
+    focusSlugById.set(id, base);
   }
   // 念のため、最終的な重複は id 接尾辞で解消する
   const counts = new Map<string, number>();
@@ -120,6 +149,8 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
     links.sort((x, y) => y.likes - x.likes || y.createdAt.localeCompare(x.createdAt));
     entries.push({
       slug: slugById.get(id)!,
+      focusSlug: focusSlugById.get(id)!,
+      aliases: focusSlugById.get(id)!.toLowerCase() !== slugById.get(id)!.toLowerCase() ? [focusSlugById.get(id)!] : [],
       title: info.title!.trim(),
       url: info.representativeUrl,
       imageUrl: info.imageUrl ?? null,
@@ -132,10 +163,10 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
 }
 
 /** 1つ以上のシナプスでつながっている作品だけを返す（10分キャッシュ）。 */
-export const getWorkEntries = unstable_cache(loadWorkEntries, ["work-entries-v2"], { revalidate: 600 });
+export const getWorkEntries = unstable_cache(loadWorkEntries, ["work-entries-v3"], { revalidate: 600 });
 
 export async function findWorkEntry(slug: string): Promise<WorkEntry | null> {
   const key = slug.toLowerCase();
   const entries = await getWorkEntries();
-  return entries.find((e) => e.slug.toLowerCase() === key) ?? null;
+  return entries.find((e) => e.slug.toLowerCase() === key || e.aliases.some((a) => a.toLowerCase() === key)) ?? null;
 }

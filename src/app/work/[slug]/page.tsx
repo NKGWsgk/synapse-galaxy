@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import { AffiliateDisclosure } from "@/components/AffiliateDisclosure";
 import { WorkPlatformLink } from "@/components/galaxy/WorkPlatformLink";
@@ -61,6 +61,8 @@ export default async function WorkPage({ params }: { params: Promise<{ slug: str
   const { slug } = await params;
   const entry = await findWorkEntry(slug);
   if (!entry) notFound();
+  // 旧スラッグ（work-xxxxxxxx など）でのアクセスは、新URLへ 301 で送る
+  if (entry.slug.toLowerCase() !== slug.toLowerCase()) permanentRedirect(`/work/${entry.slug}`);
 
   const origin = getSiteUrl().origin;
   const jsonLd = {
@@ -118,7 +120,7 @@ export default async function WorkPage({ params }: { params: Promise<{ slug: str
             <div className="mt-4 flex flex-wrap items-center gap-3">
               {isStoreUrl(entry.url) ? <WorkPlatformLink url={entry.url} /> : null}
               <Link
-                href={`/?focus=${entry.slug}`}
+                href={`/?focus=${entry.focusSlug}`}
                 className="inline-flex items-center gap-2 rounded-[4px] bg-[#1A1B50] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#2D2F7A]"
               >
                 マップで見る →
