@@ -22,6 +22,19 @@ export function SynapseSharePrompt({ synapseId, onClose }: { synapseId: string; 
     return () => { alive = false; };
   }, [synapseId]);
 
+  // OGP 画像は初回の生成に数秒かかる。X に貼る前に温めておき、クローラーの待ち時間切れを防ぐ。
+  useEffect(() => {
+    let alive = true;
+    fetch(`/s/${synapseId}`)
+      .then((r) => (r.ok ? r.text() : ""))
+      .then((html) => {
+        const m = html.match(/<meta property="og:image" content="([^"]+)"/);
+        if (alive && m?.[1]) return fetch(m[1].replace(/&amp;/g, "&")).catch(() => {});
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [synapseId]);
+
   const href = info && shareUrl
     ? buildXIntentUrl(buildShareText({ title: info.title, source: info.source, target: info.target }), shareUrl)
     : null;

@@ -7,6 +7,11 @@ export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 export const revalidate = 3600;
 
+// 空配列を返すと、初回アクセス時に生成され、以後キャッシュされる（毎回 3〜5 秒かけて作り直さない）
+export async function generateStaticParams() {
+  return [];
+}
+
 const COVER_W = 240;
 const COVER_H = 336;
 
