@@ -62,7 +62,9 @@ export default async function Image({ params }: { params: Promise<{ id: string }
 
   const hub = g.works[0] ?? null;
   const sats = g.works.slice(1, 1 + SAT_POS.length);
-  const heading = `${clipText(g.displayName, 12)}のシナプス`;
+  const name = clipText(g.displayName, 14);
+  const nameSize = name.length <= 6 ? 72 : name.length <= 9 ? 58 : 44;
+  const suffix = "のシナプス";
   const stats: Array<[string, string]> = [
     [String(g.postCount), "シナプス"],
     [String(g.worksCount), "作品"],
@@ -72,7 +74,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
   const brand = "SYNAPSE Galaxy";
 
   const [font, hubCover, ...satCovers] = await Promise.all([
-    loadJpFont(`${heading}${tagline}${brand}シナプス作品いいね0123456789${g.works.slice(0, 6).map((w) => clipText(w.title, 12)).join("")}`),
+    loadJpFont(`${name}${suffix}${tagline}${brand}シナプス作品いいね0123456789${g.works.slice(0, 6).map((w) => clipText(w.title, 12)).join("")}`),
     loadCoverDataUri(hub?.imageUrl ?? null),
     ...sats.map((w) => loadCoverDataUri(w.imageUrl)),
   ]);
@@ -104,7 +106,8 @@ export default async function Image({ params }: { params: Promise<{ id: string }
         <div style={{ display: "flex", flexDirection: "column", position: "absolute", left: 64, top: 48, width: 540, height: 534 }}>
           <div style={{ display: "flex", fontSize: 26, color: "#B9BBFF" }}>{brand}</div>
           <div style={{ display: "flex", flex: 1, flexDirection: "column", justifyContent: "center" }}>
-            <div style={{ display: "flex", fontSize: 64, fontWeight: 700, lineHeight: 1.2 }}>{heading}</div>
+            <div style={{ display: "flex", fontSize: nameSize, fontWeight: 700, lineHeight: 1.2, wordBreak: "break-all" }}>{name}</div>
+            <div style={{ display: "flex", fontSize: 40, fontWeight: 700, color: "#B9BBFF", marginTop: 4 }}>{suffix}</div>
             <div style={{ display: "flex", marginTop: 40 }}>
               {stats.map(([n, label]) => (
                 <div key={label} style={{ display: "flex", flexDirection: "column", marginRight: 44 }}>
