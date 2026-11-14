@@ -1,6 +1,7 @@
 "use client";
 
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { sendGAEvent } from "@next/third-parties/google";
 import { AnimatePresence, motion } from "framer-motion";
 import type { User } from "@supabase/supabase-js";
 import { isAllowedSynapseUrl,
@@ -442,6 +443,7 @@ export function SmartInputPanel({
         setConfirmOpen(false);
         return;
       }
+      sendGAEvent("event", "synapse_created");
       setMessage("シナプスを繋ぎました！");
       const createdSourceUrl = sourceUrl.trim();
       clearSmartInputDraft(draftUserId);

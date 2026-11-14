@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { sendGAEvent } from "@next/third-parties/google";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SynapseRow } from "@/lib/supabase/clients";
 import { createBrowserClient } from "@/lib/supabase/browser";
@@ -155,6 +156,7 @@ export function UserProfilePage({ userId, displayName, synapses: initialSynapses
                   `${isOwnPage ? "私は" : `${displayName ?? "この人"}さんは`}${synapses.length}本のシナプスで${worksCount}作品をつなぎました\n#シナプスギャラクシー`,
                   profileShareUrl,
                 )}
+                onClick={() => sendGAEvent("event", "share_click", { share_location: "user_page" })}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex shrink-0 items-center gap-1 rounded-full bg-black px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-zinc-800 sm:text-xs"

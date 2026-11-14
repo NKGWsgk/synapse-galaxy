@@ -1,5 +1,6 @@
 "use client";
 
+import { sendGAEvent } from "@next/third-parties/google";
 import { useEffect, useState } from "react";
 import { CopyLinkButton } from "@/components/galaxy/CopyLinkButton";
 import { buildShareText, buildXIntentUrl } from "@/lib/synapseShareText";
@@ -61,6 +62,7 @@ export function SynapseSharePrompt({ synapseId, onClose }: { synapseId: string; 
         {href ? (
           <a
             href={href}
+            onClick={() => sendGAEvent("event", "share_click", { share_location: "after_post" })}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"

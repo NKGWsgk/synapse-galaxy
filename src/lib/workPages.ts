@@ -3,6 +3,7 @@ import { createAnonClient, type SynapseRow } from "@/lib/supabase/clients";
 import { encodeFocusParam } from "@/lib/focusShareUrl";
 import { normalizeSynapseEndpoint } from "@/lib/urlNormalize";
 import { endpointWorkKey } from "@/lib/workEndpoint";
+import { cleanWorkTitle } from "@/lib/workTitleDisplay";
 import { buildWorkEndpointMap, type WorkEndpointInfo } from "@/lib/workResolve";
 
 export type WorkLink = {
@@ -157,8 +158,8 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
       likes: s.likes_count ?? 0,
       createdAt: s.created_at,
     };
-    add(a, { ...base, otherSlug: slugById.get(b)!, otherTitle: infoById.get(b)!.title!.trim(), otherUrl: infoById.get(b)!.representativeUrl, direction: "out" });
-    add(b, { ...base, otherSlug: slugById.get(a)!, otherTitle: infoById.get(a)!.title!.trim(), otherUrl: infoById.get(a)!.representativeUrl, direction: "in" });
+    add(a, { ...base, otherSlug: slugById.get(b)!, otherTitle: cleanWorkTitle(infoById.get(b)!.title!), otherUrl: infoById.get(b)!.representativeUrl, direction: "out" });
+    add(b, { ...base, otherSlug: slugById.get(a)!, otherTitle: cleanWorkTitle(infoById.get(a)!.title!), otherUrl: infoById.get(a)!.representativeUrl, direction: "in" });
     const at = s.updated_at ?? s.created_at;
     touch(a, at);
     touch(b, at);
@@ -175,7 +176,7 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
         ...(focusSlugById.get(id)!.toLowerCase() !== slugById.get(id)!.toLowerCase() ? [focusSlugById.get(id)!] : []),
         ...(mergedAliases.get(id) ?? []),
       ],
-      title: info.title!.trim(),
+      title: cleanWorkTitle(info.title!),
       url: info.representativeUrl,
       imageUrl: info.imageUrl ?? null,
       description: info.description?.trim() || null,
@@ -187,7 +188,7 @@ async function loadWorkEntries(): Promise<WorkEntry[]> {
 }
 
 /** 1つ以上のシナプスでつながっている作品だけを返す（10分キャッシュ）。 */
-export const getWorkEntries = unstable_cache(loadWorkEntries, ["work-entries-v4"], { revalidate: 600 });
+export const getWorkEntries = unstable_cache(loadWorkEntries, ["work-entries-v5"], { revalidate: 600 });
 
 export async function findWorkEntry(slug: string): Promise<WorkEntry | null> {
   const key = slug.toLowerCase();
