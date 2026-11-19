@@ -9,6 +9,13 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: rootDir,
   },
+  async redirects() {
+    return [
+      // 外部の文章で「(https://…/)」のように閉じ括弧ごとリンクになったURL（/ に続く「)」）を、トップへ送る
+      { source: "/\\)", destination: "/", permanent: true },
+      { source: "/%29", destination: "/", permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;
