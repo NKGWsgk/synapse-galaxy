@@ -31,5 +31,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     totalLikes,
     postCount: (synapses ?? []).length,
     displayName,
+  }, {
+    // 認証APIが遅い（1.5〜2.5秒）ので、CDNに置いて即返す
+    headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=86400" },
   });
 }

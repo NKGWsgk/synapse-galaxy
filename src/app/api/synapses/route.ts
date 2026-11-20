@@ -70,7 +70,7 @@ export async function GET(req: Request) {
     const layoutPositions = (layoutResult.data?.positions as Array<{ norm: string; x: number; y: number }> | null) ?? null;
 
     return NextResponse.json({ synapses: all, workEndpoints, layoutPositions }, {
-      headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=120" },
+      headers: { "Cache-Control": "s-maxage=300, stale-while-revalidate=86400" },
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

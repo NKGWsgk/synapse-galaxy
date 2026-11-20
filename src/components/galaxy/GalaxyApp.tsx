@@ -239,10 +239,11 @@ function GalaxyAppInner({ googleClientId }: { googleClientId?: string | null }) 
     return () => mq.removeEventListener("change", sync);
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (bypassCdn = false) => {
     shareSlugFetchStartedRef.current.clear();
     try {
-      const res = await fetch("/api/synapses");
+      // 投稿直後は CDN キャッシュ（古い一覧）を避けるため、別キーで取り直す
+      const res = await fetch(bypassCdn ? `/api/synapses?t=${Date.now()}` : "/api/synapses");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? res.statusText);
       const list = data.synapses as SynapseRow[];
@@ -373,7 +374,7 @@ function GalaxyAppInner({ googleClientId }: { googleClientId?: string | null }) 
         window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
       } catch { /* noop */ }
     }
-    void refresh().then((list) => {
+    void refresh(true).then((list) => {
       const newest = list?.[0];
       if (list && newest && !filterMapSynapses(list).some((s) => s.id === newest.id)) {
         showToast("このシナプスはまだマップに表示されません。2本以上のシナプスがつながると表示されます（フィードには表示済み）");

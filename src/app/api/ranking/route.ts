@@ -50,5 +50,7 @@ export async function GET() {
     ...map.get(userId)!,
   }));
 
-  return NextResponse.json({ ranking });
+  return NextResponse.json({ ranking }, {
+    headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=86400" },
+  });
 }

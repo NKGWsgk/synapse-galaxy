@@ -77,10 +77,13 @@ export async function GET(req: Request) {
         description: cached.description,
         imageUrl: cached.image_url,
         siteName: cached.site_name,
+      }, {
+        // 保存済みメタデータから返す経路だけキャッシュする（ライブ取得の経路は対象外）
+        headers: { "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400" },
       });
     }
 
-    const og = await fetchOgpResilient(normalizedUrl);
+    const og =await fetchOgpResilient(normalizedUrl);
 
     const merged = {
       title: mergeOgpTitle(og.title, cached?.title, pageUrl(og.title ?? cached?.title ?? null)),
