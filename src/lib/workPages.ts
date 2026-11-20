@@ -54,6 +54,8 @@ const SLUG_OVERRIDES: Record<string, string> = {
   "1-ebook": "mame-to-mugi",
   "rsa": "rsa-cryptography-summer-wars",
   "vs-ai-rehacq": "quantum-computer-vs-ai-rehacq",
+  "work-ccdfd395": "nankyoku-ryorinin",
+  "work-7df63f95": "childhoods-end",
 };
 
 /**
