@@ -2134,6 +2134,44 @@ export function GraphView({
   }, []);
 
   const touchActiveRef = useRef(false);
+  /** 指の直近の動き（慣性スクロールの初速を出す用） */
+  const dragSamplesRef = useRef<Array<{ t: number; x: number; y: number }>>([]);
+
+  /** 指を離したあと、離す直前の勢いで少しの間すべって止まる（慣性）。新しい操作が始まったら中断。 */
+  const startMomentum = useCallback((vx0: number, vy0: number) => {
+    const token = ++cameraAnimTokenRef.current;
+    let vx = vx0;
+    let vy = vy0;
+    let last = performance.now();
+    let lastCommit = last;
+    const FRICTION_PER_MS = 0.998;
+    const MIN_SPEED = 0.02; // px/ms
+    const step = (now: number) => {
+      if (token !== cameraAnimTokenRef.current) {
+        // 新しい操作に譲る（指が触れていないなら、ジェスチャー中の印だけ戻す）
+        if (!touchActiveRef.current) gesturingRef.current = false;
+        return;
+      }
+      const dt = Math.min(48, now - last);
+      last = now;
+      const p = { x: panRef.current.x + vx * dt, y: panRef.current.y + vy * dt };
+      applyCameraDom(p, zoomRef.current);
+      const decay = Math.pow(FRICTION_PER_MS, dt);
+      vx *= decay;
+      vy *= decay;
+      if (Math.hypot(vx, vy) < MIN_SPEED) {
+        commitCameraState();
+        return;
+      }
+      // すべっている間も、画面に入ってくるカードを描画できるよう、時々状態を反映する
+      if (now - lastCommit > 160) {
+        lastCommit = now;
+        startTransition(() => setPan({ ...panRef.current }));
+      }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, [applyCameraDom, commitCameraState]);
 
   const applyPinchZoom = useCallback((midClientX: number, midClientY: number, dist: number) => {
     const pinch = pinchRef.current;
@@ -2197,6 +2235,7 @@ export function GraphView({
       cameraAnimTokenRef.current += 1;
       pinchRef.current = null;
       const t = e.touches[0];
+      dragSamplesRef.current = [{ t: performance.now(), x: t.clientX, y: t.clientY }];
       bgDragRef.current = {
         startX: t.clientX,
         startY: t.clientY,
@@ -2222,6 +2261,10 @@ export function GraphView({
       const d = bgDragRef.current;
       if (!d || e.touches.length !== 1) return;
       const t = e.touches[0];
+      const now = performance.now();
+      const samples = dragSamplesRef.current;
+      samples.push({ t: now, x: t.clientX, y: t.clientY });
+      while (samples.length > 2 && now - samples[0].t > 120) samples.shift();
       applyCameraDom(
         { x: d.panX + (t.clientX - d.startX), y: d.panY + (t.clientY - d.startY) },
         zoomRef.current,
@@ -2247,8 +2290,27 @@ export function GraphView({
         return;
       }
       touchActiveRef.current = false;
+      const wasDragging = !!bgDragRef.current && !pinchRef.current;
       bgDragRef.current = null;
       pinchRef.current = null;
+
+      // 離す直前の指の速さ（px/ms）。途中で止めてから離したときは勢いなし。
+      const samples = dragSamplesRef.current;
+      dragSamplesRef.current = [];
+      if (wasDragging && e.type === "touchend" && samples.length >= 2) {
+        const first = samples[0];
+        const lastS = samples[samples.length - 1];
+        const span = lastS.t - first.t;
+        if (span > 8 && performance.now() - lastS.t < 80) {
+          const cap = 4;
+          const vx = Math.max(-cap, Math.min(cap, (lastS.x - first.x) / span));
+          const vy = Math.max(-cap, Math.min(cap, (lastS.y - first.y) / span));
+          if (Math.hypot(vx, vy) > 0.15) {
+            startMomentum(vx, vy);
+            return;
+          }
+        }
+      }
       commitCameraState();
     };
 
@@ -2269,7 +2331,7 @@ export function GraphView({
       el.removeEventListener("gesturechange", blockSafariGesture);
       el.removeEventListener("gestureend", blockSafariGesture);
     };
-  }, [applyPinchZoom, applyCameraDom, commitCameraState]);
+  }, [applyPinchZoom, applyCameraDom, commitCameraState, startMomentum]);
 
   const onBgPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === "touch") return;
