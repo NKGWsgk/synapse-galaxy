@@ -56,6 +56,7 @@ const SLUG_OVERRIDES: Record<string, string> = {
   "vs-ai-rehacq": "quantum-computer-vs-ai-rehacq",
   "work-ccdfd395": "nankyoku-ryorinin",
   "work-7df63f95": "childhoods-end",
+  "work-b9d61234": "searching-for-bobby-fischer",
 };
 
 /**
