@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3-force";
 
 import { resolveContentDisplayTitle } from "@/lib/ogpDisplay";
@@ -1044,7 +1044,7 @@ function GraphCard({
     <div
       onPointerDown={onPointerDown}
       className={[
-        "relative flex flex-col overflow-visible rounded-xl bg-white text-left shadow-[0_3px_12px_rgba(0,0,0,0.08)] transition-transform duration-150 will-change-transform",
+        "relative flex flex-col overflow-visible rounded-xl bg-white text-left shadow-[0_3px_12px_rgba(0,0,0,0.08)] transition-transform duration-150",
         isFocus ? "ring-2 ring-inset ring-indigo-400" : "ring-1 ring-inset ring-zinc-200/70",
         loadingHint ? "" : "hover:scale-[1.04] hover:z-30",
       ].join(" ")}
@@ -2123,9 +2123,13 @@ export function GraphView({
 
   const commitCameraState = useCallback(() => {
     gesturingRef.current = false;
+    // 指を離した直後の再描画（カードの間引き・線ラベルの配置）は重いので、
+    // 中断可能な更新にして、すぐ次のスワイプが始まっても指に追従できるようにする。
     requestAnimationFrame(() => {
-      setPan({ ...panRef.current });
-      setZoom(zoomRef.current);
+      startTransition(() => {
+        setPan({ ...panRef.current });
+        setZoom(zoomRef.current);
+      });
     });
   }, []);
 
